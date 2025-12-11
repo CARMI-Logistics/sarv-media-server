@@ -1,0 +1,381 @@
+###############################################
+# Global settings
+logLevel: debug
+logDestinations: [stdout]
+logFile:
+
+# Authentication -> Disabled for development
+# To enable JWT auth, uncomment the lines below
+# authMethod: jwt
+# authJWTJWKS: http://mediamtx-backend:8080/jwks
+# authJWTJWKSFingerprint:
+# authJWTClaimKey: mediamtx_permissions
+# authJWTExclude: []
+# authJWTInHTTPQuery: true
+
+###############################################
+# API
+api: yes
+apiAddress: 0.0.0.0:9997
+apiEncryption: no
+apiServerKey: server.key
+apiServerCert: server.crt
+
+###############################################
+# Metrics (opcional para monitoreo)
+metrics: yes
+metricsAddress: :9998
+metricsEncryption: no
+metricsServerKey: server.key
+metricsServerCert: server.crt
+
+###############################################
+# PPROF (solo si lo necesitas para profiling)
+pprof: no
+pprofAddress: :9999
+pprofEncryption: no
+pprofServerKey: server.key
+pprofServerCert: server.crt
+
+###############################################
+# RTSP server
+rtsp: yes
+rtspTransports: [udp, multicast, tcp]
+rtspEncryption: "no"
+rtspAddress: :8554
+rtspsAddress: :8322
+rtpAddress: :8000
+rtcpAddress: :8001
+multicastIPRange: 224.1.0.0/16
+multicastRTPPort: 8002
+multicastRTCPPort: 8003
+srtpAddress: :8004
+srtcpAddress: :8005
+multicastSRTPPort: 8006
+multicastSRTCPPort: 8007
+rtspServerKey: server.key
+rtspServerCert: server.crt
+rtspAuthMethods: [basic]
+
+###############################################
+# RTMP server
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+rtmpsAddress: :1936
+rtmpServerKey: server.key
+rtmpServerCert: server.crt
+
+###############################################
+# HLS server
+hls: yes
+hlsAddress: :8888
+hlsEncryption: no
+hlsServerKey: server.key
+hlsServerCert: server.crt
+hlsAlwaysRemux: yes
+hlsVariant: fmp4
+hlsSegmentCount: 6
+hlsSegmentDuration: 2s
+hlsPartDuration: 500ms
+hlsSegmentMaxSize: 50M
+hlsDirectory: ""
+hlsMuxerCloseAfter: 120s
+
+###############################################
+# WebRTC server
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcServerKey: server.key
+webrtcServerCert: server.crt
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfacesList: []
+webrtcAdditionalHosts: []
+webrtcICEServers2: []
+webrtcHandshakeTimeout: 10s
+webrtcTrackGatherTimeout: 2s
+webrtcSTUNGatherTimeout: 5s
+
+###############################################
+# SRT server (si no lo usas, puedes poner srt: no)
+srt: yes
+srtAddress: :8890
+
+###############################################
+# Default path settings
+pathDefaults:
+  source: publisher
+  sourceFingerprint:
+  sourceOnDemand: no
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 10s
+  maxReaders: 0
+  fallback:
+  useAbsoluteTimestamp: false
+
+  # Grabación por defecto
+  record: yes
+  recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+  recordFormat: fmp4
+  recordPartDuration: 2s
+  recordMaxPartSize: 50M
+  recordSegmentDuration: 1h
+  recordDeleteAfter: 24h
+
+  # Publisher
+  overridePublisher: yes
+  srtPublishPassphrase:
+
+  # Hooks (por ahora sin usar, los puedes rellenar cuando quieras)
+  runOnInit:
+  runOnInitRestart: no
+  runOnDemand:
+  runOnDemandRestart: no
+  runOnDemandStartTimeout: 10s
+  runOnDemandCloseAfter: 10s
+  runOnUnDemand:
+  runOnReady:
+  runOnReadyRestart: no
+  runOnNotReady:
+  runOnRead:
+  runOnReadRestart: no
+  runOnUnread:
+  runOnRecordSegmentCreate:
+  runOnRecordSegmentComplete:
+
+###############################################
+# Path settings
+paths:
+  # Mosaic stream (generado por FFmpeg)
+  mosaic:
+    source: publisher
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: yes
+    sourceOnDemand: no
+
+  # Entrnace cameras
+  entrance-guardhouse-bottom:
+    source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  entrance-guardhouse-top:
+    source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  entrance-guardhouse-right-corner:
+    source: rtsp://zeus:zeus@10.0.0.45/defaultPrimary?mtu=1440&streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no  
+
+  entrance-guardhouse-left-corner:
+    source: rtsp://zeus:zeus@10.0.0.46/defaultPrimary?mtu=1440&streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no    
+
+  entrance-warehouse-office-entry-corner:
+    source: rtsp://root:dynamics8249@10.0.0.33/axis-media/media.amp
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  main-entrance-first-camera:
+    source: rtsp://root:dynamics8249@10.0.0.34/axis-media/media.amp
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  enrtre-warehouse-sar-corner-1:
+    source: rtsp://zeus:zeus@10.0.0.222:554/rtsp/defaultPrimary-0?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no 
+
+  enrtre-warehouse-sar-corner-2:
+    source: rtsp://zeus:zeus@10.0.0.222:554/rtsp/defaultPrimary-1?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no  
+
+  enrtre-warehouse-sar-corner-3:
+    source: rtsp://zeus:zeus@10.0.0.222:554/rtsp/defaultPrimary-2?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no       
+
+  # Warehouse 1 cameras
+  verificaction-camera:
+    source: rtsp://admin:carmi2025.@10.1.7.106:554
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  W1-South-East-Yard-Corner:
+    source: rtsp://zeus:zeus@10.0.0.123:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no  
+
+  W1-Door-9-11: 
+    source: rtsp://zeus:zeus@10.0.0.71:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  W1-Door-24-22: 
+    source: rtsp://zeus:zeus@10.0.0.70:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  W1-Door-14-17: 
+    source: rtsp://zeus:zeus@10.0.0.79:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+  W1-Door-14-12: 
+    source: rtsp://zeus:zeus@10.0.0.77:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no
+
+  W2-Door-Preview-39-49: 
+    source: rtsp://zeus:zeus@10.0.0.121:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no    
+
+  W2-Door-Preview-43-To-Ramp: 
+    source: rtsp://zeus:zeus@10.0.0.123:554/rtsp/defaultPrimary?streamType=m
+    sourceFingerprint: ""
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: no                       
+
+
+  ###############################################
+  # Wildcard path - Accepts ANY stream from publishers
+  # Use this to publish streams dynamically without pre-configuration
+  # Examples:
+  #   RTSP: ffmpeg -i input.mp4 -f rtsp rtsp://localhost:8554/live/my-stream
+  #   RTMP: ffmpeg -i input.mp4 -f flv rtmp://localhost:1935/live/my-stream
+  #   Any path under "live/" will be accepted
+  ~^live/.*$:
+    source: publisher
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+    recordFormat: fmp4
+    recordPartDuration: 5s
+    recordSegmentDuration: 1h
+    recordDeleteAfter: 24h
+    overridePublisher: yes
+    sourceOnDemand: no
+
+  # Catch-all for any other dynamic streams (use with caution)
+  # Uncomment if you want to accept ANY path as publisher
+  # ~^.*$:
+  #   source: publisher
+  #   record: yes
+  #   recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+  #   recordFormat: fmp4
+  #   recordPartDuration: 5s
+  #   recordSegmentDuration: 1h
+  #   recordDeleteAfter: 24h
+  #   overridePublisher: yes

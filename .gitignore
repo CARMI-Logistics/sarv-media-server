@@ -1,0 +1,23 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Recordings (volumen de MediaMTX)
+/recordings/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
