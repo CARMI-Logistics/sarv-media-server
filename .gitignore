@@ -1,0 +1,29 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Recordings (volumen de MediaMTX)
+/recordings/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Planes internos (no versionar)
+/plans/
+
+# Config de MediaMTX con credenciales (NO subir)
+mediamtx.yml

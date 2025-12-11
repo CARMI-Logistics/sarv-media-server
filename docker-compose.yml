@@ -1,0 +1,88 @@
+# =============================================================================
+# Docker Compose - MediaMTX con Backend de Autenticación JWT
+# =============================================================================
+# 
+# Servicios:
+#   - mediamtx-backend: Backend Rust para autenticación JWT
+#   - mediamtx: Servidor de streaming MediaMTX
+#
+# Uso:
+#   docker compose down   # Detener servicios existentes
+#   docker compose up --build
+#
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Backend de Autenticación JWT (Rust + Axum)
+  # ---------------------------------------------------------------------------
+  mediamtx-backend:
+    build: .
+    container_name: mediamtx-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - JWT_EXP_MINUTES=60
+      - RUST_LOG=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - mediamtx-network
+
+  # ---------------------------------------------------------------------------
+  # MediaMTX - Servidor de Streaming
+  # ---------------------------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./recordings:/recordings
+    command: ["/mediamtx.yml"]
+    ports:
+      # RTSP
+      - "8554:8554"
+      - "8322:8322"
+      # RTMP
+      - "1935:1935"
+      - "1936:1936"
+      # HLS
+      - "8888:8888"
+      # WebRTC
+      - "8889:8889"
+      # WebRTC UDP (ICE)
+      - "8189:8189/udp"
+      # API
+      - "9997:9997"
+      # Metrics
+      - "9998:9998"
+      # RTP/RTCP
+      - "8000:8000/udp"
+      - "8001:8001/udp"
+      # Multicast RTP/RTCP
+      - "8002:8002/udp"
+      - "8003:8003/udp"
+      # SRTP/SRTCP
+      - "8004:8004/udp"
+      - "8005:8005/udp"
+      # Multicast SRTP/SRTCP
+      - "8006:8006/udp"
+      - "8007:8007/udp"
+      # SRT
+      - "8890:8890/udp"
+    depends_on:
+      mediamtx-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mediamtx-network
+
+networks:
+  mediamtx-network:
+    driver: bridge
