@@ -2,15 +2,27 @@
 //!
 //! Este servicio genera tokens JWT firmados con RS256 y expone un JWKS
 //! para que MediaMTX pueda validar los tokens.
+//!
+//! También gestiona cámaras (CRUD + búsqueda) y generación de mosaicos FFmpeg.
+
+mod db;
+mod models;
+mod camera;
+mod mosaic;
 
 use axum::{
     extract::State,
     http::StatusCode,
     routing::{get, post},
     Json, Router,
+    middleware::{self, Next},
+    response::Response,
 };
+use axum::http::Request;
+use tower_http::services::ServeDir;
+use tower_http::cors::{CorsLayer, Any};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{encode, decode, Algorithm, EncodingKey, DecodingKey, Header, Validation};
 use rand::rngs::OsRng;
 use rsa::{pkcs8::EncodePrivateKey, RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
@@ -148,18 +160,30 @@ struct Jwks {
 // ============================================================================
 
 /// Estado global compartido entre handlers
-struct AppState {
+pub struct AppState {
     /// Clave para firmar JWT (RS256)
     encoding_key: EncodingKey,
+    /// Clave para verificar JWT (RS256)
+    decoding_key: DecodingKey,
     /// JWKS preconstruido en memoria
     jwks: Jwks,
     /// Configuración
     config: Config,
+    /// Base de datos SQLite
+    pub db: db::Database,
+    /// URL de la API de MediaMTX
+    pub mediamtx_api_url: String,
+    /// Usuario para la API de MediaMTX (Basic Auth)
+    pub mediamtx_api_user: String,
+    /// Contraseña para la API de MediaMTX (Basic Auth)
+    pub mediamtx_api_pass: String,
+    /// HTTP client reutilizable (connection pooling)
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
     /// Crea un nuevo AppState generando un par de claves RSA
-    fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(config: Config, db: db::Database, mediamtx_api_url: String, mediamtx_api_user: String, mediamtx_api_pass: String) -> Result<Self, Box<dyn std::error::Error>> {
         info!("Generando par de claves RSA 2048 bits...");
 
         // Generar par de claves RSA 2048 bits
@@ -171,16 +195,29 @@ impl AppState {
         let private_pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)?;
         let encoding_key = EncodingKey::from_rsa_pem(private_pem.as_bytes())?;
 
+        // Obtener la clave pública en formato PEM para verificación
+        use rsa::pkcs8::EncodePublicKey;
+        let public_pem = public_key.to_public_key_pem(rsa::pkcs8::LineEnding::LF)?;
+        let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes())?;
+
         // Construir JWKS desde la clave pública
         let jwks = Self::build_jwks(&public_key)?;
 
         info!("Par de claves RSA generado exitosamente");
         info!("JWKS construido con kid='key1'");
 
+        let http_client = reqwest::Client::new();
+
         Ok(Self {
             encoding_key,
+            decoding_key,
             jwks,
             config,
+            db,
+            mediamtx_api_url,
+            mediamtx_api_user,
+            mediamtx_api_pass,
+            http_client,
         })
     }
 
@@ -237,6 +274,49 @@ impl AppState {
         header.kid = Some("key1".to_string());
 
         encode(&header, &claims, &self.encoding_key)
+    }
+}
+
+// ============================================================================
+// JWT Auth Middleware
+// ============================================================================
+
+async fn jwt_auth(
+    State(state): State<Arc<AppState>>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    let auth_header = req.headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+
+    let token = match auth_header {
+        Some(h) if h.starts_with("Bearer ") => &h[7..],
+        _ => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse { error: "Token requerido. Usa Authorization: Bearer <token>".to_string() }),
+            ));
+        }
+    };
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_required_spec_claims(&["sub", "exp"]);
+
+    match decode::<Claims>(token, &state.decoding_key, &validation) {
+        Ok(_) => Ok(next.run(req).await),
+        Err(e) => {
+            warn!("JWT inválido: {}", e);
+            let msg = match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => "Token expirado",
+                jsonwebtoken::errors::ErrorKind::InvalidSignature => "Firma inválida",
+                _ => "Token inválido",
+            };
+            Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse { error: msg.to_string() }),
+            ))
+        }
     }
 }
 
@@ -595,30 +675,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
     info!("Configuración cargada: {:?}", config);
 
+    // Inicializar base de datos SQLite
+    let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| "/app/data/cameras.db".to_string());
+    // Ensure parent directory exists
+    if let Some(parent) = std::path::Path::new(&db_path).parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let database = db::Database::new(&db_path)?;
+    database.seed_if_empty()?;
+
+    // MediaMTX API URL and credentials
+    let mediamtx_api_url = env::var("MEDIAMTX_API_URL")
+        .unwrap_or_else(|_| "http://mediamtx:9997".to_string());
+    let mediamtx_api_user = env::var("MEDIAMTX_API_USER")
+        .unwrap_or_else(|_| "admin".to_string());
+    let mediamtx_api_pass = env::var("MEDIAMTX_API_PASS")
+        .unwrap_or_else(|_| "mediamtx_secret".to_string());
+
     // Crear estado de la aplicación
-    let state = Arc::new(AppState::new(config.clone())?);
+    let state = Arc::new(AppState::new(config.clone(), database, mediamtx_api_url, mediamtx_api_user, mediamtx_api_pass)?);
+
+    // CORS layer
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
+    // Subrouter de cámaras (protegido por JWT)
+    let camera_routes = Router::new()
+        .route("/", get(camera::list_cameras).post(camera::create_camera))
+        .route("/sync", post(camera::sync_all_cameras))
+        .route("/:id", get(camera::get_camera).put(camera::update_camera).delete(camera::delete_camera))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Subrouter de mosaicos (protegido por JWT)
+    let mosaic_routes = Router::new()
+        .route("/", get(mosaic::list_mosaics).post(mosaic::create_mosaic))
+        .route("/:id", get(mosaic::get_mosaic).put(mosaic::update_mosaic).delete(mosaic::delete_mosaic))
+        .route("/:id/start", post(mosaic::start_mosaic))
+        .route("/:id/stop", post(mosaic::stop_mosaic))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Static files directory
+    let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "/app/static".to_string());
+    info!("Sirviendo archivos estáticos desde: {}", static_dir);
 
     // Construir router con documentación OpenAPI
     let app = Router::new()
-        // Endpoints de la API
         .route("/health", get(health))
         .route("/jwks", get(get_jwks))
         .route("/auth/login", post(login))
-        // Documentación OpenAPI (Scalar UI)
+        .nest("/api/cameras", camera_routes)
+        .nest("/api/mosaics", mosaic_routes)
         .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
-        // Endpoint para obtener el JSON de OpenAPI
         .route("/openapi.json", get(openapi_json))
-        .with_state(state);
+        .with_state(state)
+        .layer(cors)
+        .fallback_service(ServeDir::new(&static_dir));
 
     // Iniciar servidor
     let addr = format!("0.0.0.0:{}", config.server_port);
     info!("Servidor iniciando en http://{}", addr);
     info!("Endpoints disponibles:");
-    info!("  GET  /health       - Health check");
-    info!("  GET  /jwks         - JSON Web Key Set");
-    info!("  POST /auth/login   - Login y obtención de JWT");
-    info!("  GET  /docs         - Documentación API (Scalar)");
-    info!("  GET  /openapi.json - Especificación OpenAPI");
+    info!("  GET  /health             - Health check");
+    info!("  GET  /jwks               - JSON Web Key Set");
+    info!("  POST /auth/login         - Login y obtención de JWT");
+    info!("  GET  /api/cameras        - Listar cámaras");
+    info!("  POST /api/cameras        - Crear cámara");
+    info!("  GET  /api/cameras/:id    - Obtener cámara");
+    info!("  PUT  /api/cameras/:id    - Actualizar cámara");
+    info!("  DEL  /api/cameras/:id    - Eliminar cámara");
+    info!("  POST /api/cameras/sync   - Sincronizar con MediaMTX");
+    info!("  GET  /api/mosaics        - Listar mosaicos");
+    info!("  POST /api/mosaics        - Crear mosaico");
+    info!("  POST /api/mosaics/:id/start - Iniciar mosaico");
+    info!("  POST /api/mosaics/:id/stop  - Detener mosaico");
+    info!("  GET  /docs               - Documentación API (Scalar)");
+    info!("  GET  /                   - UI de gestión");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

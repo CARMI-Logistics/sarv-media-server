@@ -1,17 +1,35 @@
 ###############################################
 # Global settings
-logLevel: debug
+logLevel: info
 logDestinations: [stdout]
 logFile:
 
-# Authentication -> Disabled for development
-# To enable JWT auth, uncomment the lines below
-# authMethod: jwt
-# authJWTJWKS: http://mediamtx-backend:8080/jwks
-# authJWTJWKSFingerprint:
-# authJWTClaimKey: mediamtx_permissions
-# authJWTExclude: []
-# authJWTInHTTPQuery: true
+# Authentication
+authMethod: internal
+authInternalUsers:
+  # Admin user for API access (backend and local)
+  - user: admin
+    pass: mediamtx_secret
+    ips: []
+    permissions:
+      - action: api
+      - action: read
+        path: ""
+      - action: publish
+        path: ""
+      - action: playback
+        path: ""
+  # Default user for stream access (anyone can read/publish/playback)
+  - user: any
+    pass: ""
+    ips: []
+    permissions:
+      - action: read
+        path: ""
+      - action: publish
+        path: ""
+      - action: playback
+        path: ""
 
 ###############################################
 # API
@@ -111,7 +129,7 @@ pathDefaults:
   sourceFingerprint:
   sourceOnDemand: no
   sourceOnDemandStartTimeout: 10s
-  sourceOnDemandCloseAfter: 10s
+  sourceOnDemandCloseAfter: 30s
   maxReaders: 0
   fallback:
   useAbsoluteTimestamp: false
@@ -149,8 +167,8 @@ pathDefaults:
 ###############################################
 # Path settings
 paths:
-  # Mosaic stream (generado por FFmpeg)
-  mosaic:
+  # Mosaic streams (generado por FFmpeg, patrón dinámico mosaic-<nombre>)
+  ~^mosaic-.*$:
     source: publisher
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
@@ -165,6 +183,7 @@ paths:
   entrance-guardhouse-bottom:
     source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -176,6 +195,7 @@ paths:
   entrance-guardhouse-top:
     source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -187,6 +207,7 @@ paths:
   entrance-guardhouse-right-corner:
     source: rtsp://zeus:zeus@10.0.0.45/defaultPrimary?mtu=1440&streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -198,6 +219,7 @@ paths:
   entrance-guardhouse-left-corner:
     source: rtsp://zeus:zeus@10.0.0.46/defaultPrimary?mtu=1440&streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -209,6 +231,7 @@ paths:
   entrance-warehouse-office-entry-corner:
     source: rtsp://root:dynamics8249@10.0.0.33/axis-media/media.amp
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -220,6 +243,7 @@ paths:
   main-entrance-first-camera:
     source: rtsp://root:dynamics8249@10.0.0.34/axis-media/media.amp
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -231,6 +255,7 @@ paths:
   enrtre-warehouse-sar-corner-1:
     source: rtsp://zeus:zeus@10.0.0.222:554/rtsp/defaultPrimary-0?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -242,6 +267,7 @@ paths:
   enrtre-warehouse-sar-corner-2:
     source: rtsp://zeus:zeus@10.0.0.222:554/rtsp/defaultPrimary-1?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -253,6 +279,7 @@ paths:
   enrtre-warehouse-sar-corner-3:
     source: rtsp://zeus:zeus@10.0.0.222:554/rtsp/defaultPrimary-2?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -265,6 +292,7 @@ paths:
   verificaction-camera:
     source: rtsp://admin:carmi2025.@10.1.7.106:554
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -276,6 +304,7 @@ paths:
   W1-South-East-Yard-Corner:
     source: rtsp://zeus:zeus@10.0.0.123:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -287,6 +316,7 @@ paths:
   W1-Door-9-11: 
     source: rtsp://zeus:zeus@10.0.0.71:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -298,6 +328,7 @@ paths:
   W1-Door-24-22: 
     source: rtsp://zeus:zeus@10.0.0.70:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -309,6 +340,7 @@ paths:
   W1-Door-14-17: 
     source: rtsp://zeus:zeus@10.0.0.79:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -319,6 +351,7 @@ paths:
   W1-Door-14-12: 
     source: rtsp://zeus:zeus@10.0.0.77:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -330,6 +363,7 @@ paths:
   W2-Door-Preview-39-49: 
     source: rtsp://zeus:zeus@10.0.0.121:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4
@@ -341,6 +375,7 @@ paths:
   W2-Door-Preview-43-To-Ramp: 
     source: rtsp://zeus:zeus@10.0.0.123:554/rtsp/defaultPrimary?streamType=m
     sourceFingerprint: ""
+    sourceOnDemand: no
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
     recordFormat: fmp4

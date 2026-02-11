@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 # Etapa 1: Build
 # -----------------------------------------------------------------------------
-FROM rust:latest AS builder
+FROM rust:bookworm AS builder
 
 WORKDIR /app
 
@@ -30,16 +30,23 @@ RUN touch src/main.rs && cargo build --release
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
-# Instalar dependencias mínimas de runtime (incluye curl para healthcheck)
+# Instalar dependencias mínimas de runtime (curl para healthcheck, ffmpeg para mosaicos)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copiar binario compilado
 COPY --from=builder /app/target/release/mediamtx-auth-backend /app/mediamtx-auth-backend
+
+# Copiar archivos estáticos de la UI
+COPY static /app/static
+
+# Crear directorio para datos (SQLite DB)
+RUN mkdir -p /app/data
 
 # Puerto por defecto
 EXPOSE 8080
@@ -48,6 +55,8 @@ EXPOSE 8080
 ENV SERVER_PORT=8080
 ENV JWT_EXP_MINUTES=60
 ENV RUST_LOG=info
+ENV DATABASE_PATH=/app/data/cameras.db
+ENV MEDIAMTX_API_URL=http://mediamtx:9997
 
 # Ejecutar el backend
 CMD ["/app/mediamtx-auth-backend"]

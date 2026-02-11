@@ -7,7 +7,7 @@ authors = ["Dev"]
 
 [dependencies]
 # Runtime async
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
 
 # Framework HTTP
 axum = { version = "0.7", features = ["macros", "json"] }
@@ -39,3 +39,15 @@ utoipa-scalar = { version = "0.1", features = ["axum"] }
 
 # Variables de entorno desde .env
 dotenvy = "0.15"
+
+# SQLite database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# HTTP client (for MediaMTX API)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Static file serving
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# UUID for unique IDs
+uuid = { version = "1", features = ["v4"] }

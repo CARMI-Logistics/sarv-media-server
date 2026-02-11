@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MediaMTX - Camera Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    .cam-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+    .cam-card { transition: all 0.2s ease; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .status-dot.on { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+    .status-dot.off { background: #ef4444; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .modal-overlay { backdrop-filter: blur(4px); }
+    .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: 600; }
+    .viewer-container { position: relative; overflow: hidden; cursor: grab; background: #000; border-radius: 8px; }
+    .viewer-container.dragging { cursor: grabbing; }
+    .viewer-container video { transform-origin: center center; transition: none; display: block; width: 100%; }
+    .zoom-controls { position: absolute; bottom: 12px; right: 12px; display: flex; gap: 4px; z-index: 10; }
+    .zoom-controls button { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; cursor: pointer; font-size: 16px; backdrop-filter: blur(8px); transition: background 0.15s; }
+    .zoom-controls button:hover { background: rgba(59,130,246,0.6); }
+    .zoom-badge { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 10px; border-radius: 6px; font-size: 12px; z-index: 10; backdrop-filter: blur(8px); }
+    .viewer-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <!-- ================= LOGIN SCREEN ================= -->
+  <div id="login-screen" class="hidden min-h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <div class="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i data-lucide="video" class="w-8 h-8 text-white"></i>
+        </div>
+        <h1 class="text-2xl font-bold text-white">MediaMTX</h1>
+        <p class="text-sm text-gray-500 mt-1">Camera Manager</p>
+      </div>
+      <form onsubmit="handleLogin(event)" class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1.5">Usuario</label>
+          <input type="text" id="login-user" required autocomplete="username"
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition" placeholder="admin">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1.5">Contraseña</label>
+          <input type="password" id="login-pass" required autocomplete="current-password"
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition" placeholder="••••••">
+        </div>
+        <div id="login-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
+        <button type="submit" id="login-btn" class="w-full py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+          <i data-lucide="log-in" class="w-4 h-4"></i> Iniciar sesión
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MAIN APP (hidden until authenticated) ================= -->
+  <div id="app-main" class="hidden">
+
+  <!-- Header -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between sticky top-0 z-40">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center">
+        <i data-lucide="video" class="w-5 h-5 text-white"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold text-white">MediaMTX Camera Manager</h1>
+        <p class="text-xs text-gray-500" id="camera-count">Cargando...</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="syncAllCameras()" class="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition" title="Sincronizar cámaras con MediaMTX">
+        <i data-lucide="refresh-cw" class="w-4 h-4"></i> Sync
+      </button>
+      <a href="/docs" target="_blank" class="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">
+        <i data-lucide="book-open" class="w-4 h-4"></i> API Docs
+      </a>
+      <button onclick="logout()" class="flex items-center gap-2 px-3 py-2 bg-red-900/40 hover:bg-red-800/60 text-red-300 rounded-lg text-sm transition" title="Cerrar sesión">
+        <i data-lucide="log-out" class="w-4 h-4"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <div class="bg-gray-900 border-b border-gray-800 px-6 flex gap-6">
+    <button onclick="switchTab('cameras')" id="tab-cameras" class="py-3 px-1 text-sm tab-active transition">
+      <span class="flex items-center gap-2"><i data-lucide="camera" class="w-4 h-4"></i> Cámaras</span>
+    </button>
+    <button onclick="switchTab('mosaics')" id="tab-mosaics" class="py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition">
+      <span class="flex items-center gap-2"><i data-lucide="layout-grid" class="w-4 h-4"></i> Mosaicos</span>
+    </button>
+  </div>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-6 py-6">
+
+    <!-- ================= CAMERAS TAB ================= -->
+    <div id="panel-cameras">
+      <!-- Search + Add -->
+      <div class="flex items-center justify-between mb-6 gap-4">
+        <div class="relative flex-1 max-w-md">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"></i>
+          <input type="text" id="camera-search" placeholder="Buscar cámaras por nombre o IP..."
+            class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition"
+            oninput="debouncedSearch()">
+        </div>
+        <button onclick="openCameraModal()" class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">
+          <i data-lucide="plus" class="w-4 h-4"></i> Nueva Cámara
+        </button>
+      </div>
+
+      <!-- Camera Grid -->
+      <div id="camera-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <!-- Populated by JS -->
+      </div>
+      <div id="camera-empty" class="hidden text-center py-16 text-gray-500">
+        <i data-lucide="camera-off" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+        <p>No se encontraron cámaras</p>
+      </div>
+    </div>
+
+    <!-- ================= MOSAICS TAB ================= -->
+    <div id="panel-mosaics" class="hidden">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-lg font-semibold">Mosaicos</h2>
+        <button onclick="openMosaicModal()" class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">
+          <i data-lucide="plus" class="w-4 h-4"></i> Nuevo Mosaico
+        </button>
+      </div>
+      <div id="mosaic-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Populated by JS -->
+      </div>
+      <div id="mosaic-empty" class="hidden text-center py-16 text-gray-500">
+        <i data-lucide="layout-grid" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+        <p>No hay mosaicos creados</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- ================= CAMERA MODAL ================= -->
+  <div id="camera-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay bg-black/50">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg mx-4 fade-in shadow-2xl">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h3 id="camera-modal-title" class="text-lg font-semibold">Nueva Cámara</h3>
+        <button onclick="closeCameraModal()" class="text-gray-400 hover:text-white transition"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="camera-form" onsubmit="saveCameraForm(event)" class="p-6 space-y-4">
+        <input type="hidden" id="cam-id" value="">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Nombre *</label>
+          <input type="text" id="cam-name" required class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="ej: entrance-camera-1">
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="col-span-2">
+            <label class="block text-sm text-gray-400 mb-1">Host / IP *</label>
+            <input type="text" id="cam-host" required class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="10.0.0.30">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Puerto</label>
+            <input type="number" id="cam-port" value="554" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Usuario</label>
+            <input type="text" id="cam-user" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="admin">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Contraseña</label>
+            <input type="text" id="cam-pass" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="admin123">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Path RTSP</label>
+          <input type="text" id="cam-path" value="/defaultPrimary?streamType=m" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Protocolo</label>
+            <select id="cam-protocol" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+              <option value="rtsp">RTSP</option>
+              <option value="rtmp">RTMP</option>
+            </select>
+          </div>
+          <div class="flex items-end">
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" id="cam-enabled" checked class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
+              Habilitada
+            </label>
+          </div>
+          <div class="flex items-end">
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" id="cam-record" checked class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
+              Grabar
+            </label>
+          </div>
+        </div>
+        <div class="flex items-center">
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" id="cam-ondemand" checked class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
+            Source on Demand (conectar solo cuando alguien vea)
+          </label>
+        </div>
+        <div id="cam-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" onclick="closeCameraModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MOSAIC MODAL ================= -->
+  <div id="mosaic-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay bg-black/50">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl mx-4 fade-in shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
+        <h3 id="mosaic-modal-title" class="text-lg font-semibold">Nuevo Mosaico</h3>
+        <button onclick="closeMosaicModal()" class="text-gray-400 hover:text-white transition"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="mosaic-form" onsubmit="saveMosaicForm(event)" class="p-6 space-y-4">
+        <input type="hidden" id="mos-id" value="">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Nombre *</label>
+            <input type="text" id="mos-name" required class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="ej: mosaic-entrance">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Layout</label>
+            <select id="mos-layout" onchange="updateMosaicPreview()" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+              <option value="1x1">1x1 (1 cámara)</option>
+              <option value="2x2" selected>2x2 (4 cámaras)</option>
+              <option value="3x3">3x3 (9 cámaras)</option>
+              <option value="4x4">4x4 (16 cámaras)</option>
+              <option value="5x5">5x5 (25 cámaras)</option>
+              <option value="6x6">6x6 (36 cámaras)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Camera selector -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Buscar cámaras</label>
+          <input type="text" id="mos-cam-search" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 mb-2" placeholder="Filtrar cámaras..." oninput="filterMosaicCameras()">
+          <div id="mos-cam-list" class="max-h-48 overflow-y-auto space-y-1 bg-gray-800 rounded-lg p-2 border border-gray-700">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Selected cameras -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Cámaras seleccionadas (<span id="mos-selected-count">0</span>/<span id="mos-max-count">4</span>)</label>
+          <div id="mos-selected" class="min-h-[40px] bg-gray-800 rounded-lg p-2 border border-gray-700 flex flex-wrap gap-2">
+            <span class="text-gray-500 text-sm" id="mos-no-cams">Selecciona cámaras de la lista</span>
+          </div>
+        </div>
+
+        <div id="mos-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" onclick="closeMosaicModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  </div><!-- /app-main -->
+
+  <!-- ================= CAMERA VIEWER MODAL ================= -->
+  <div id="viewer-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay bg-black/80">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-5xl mx-4 fade-in shadow-2xl">
+      <div class="flex items-center justify-between px-6 py-3 border-b border-gray-800">
+        <div>
+          <h3 id="viewer-title" class="text-lg font-semibold text-white">Cámara</h3>
+          <p id="viewer-url" class="text-xs text-gray-500 truncate max-w-md"></p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="toggleViewerFullscreen()" class="p-2 text-gray-400 hover:text-white transition rounded-lg hover:bg-gray-800" title="Pantalla completa">
+            <i data-lucide="maximize-2" class="w-4 h-4"></i>
+          </button>
+          <button onclick="closeViewer()" class="p-2 text-gray-400 hover:text-white transition rounded-lg hover:bg-gray-800">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+      <div class="p-4">
+        <div id="viewer-wrap" class="viewer-container" style="aspect-ratio:16/9;">
+          <div id="viewer-loading" class="viewer-loading">
+            <div class="text-center text-gray-400">
+              <div class="animate-spin w-8 h-8 border-2 border-gray-600 border-t-blue-500 rounded-full mx-auto mb-2"></div>
+              <p class="text-sm">Conectando al stream...</p>
+            </div>
+          </div>
+          <span id="zoom-badge" class="zoom-badge">1.0x</span>
+          <video id="viewer-video" autoplay muted playsinline></video>
+          <div class="zoom-controls">
+            <button onclick="viewerZoom(-0.25)" title="Alejar">−</button>
+            <button onclick="viewerZoomReset()" title="Restablecer">⊙</button>
+            <button onclick="viewerZoom(0.25)" title="Acercar">+</button>
+            <button onclick="captureScreenshot()" title="Capturar pantalla">📷</button>
+            <button id="record-btn" onclick="toggleRecording()" title="Grabar video">🔴</button>
+          </div>
+        </div>
+        <div id="viewer-error" class="hidden mt-3 text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 text-center"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= TOAST ================= -->
+  <div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg text-sm shadow-lg fade-in"></div>
+
+  <script>
+    // =====================================================================
+    // State
+    // =====================================================================
+    let allCameras = [];
+    let allMosaics = [];
+    let selectedMosaicCameras = [];
+    let searchTimeout = null;
+
+    const API = '';
+
+    // =====================================================================
+    // Auth
+    // =====================================================================
+    function getToken() { return localStorage.getItem('jwt_token'); }
+    function setToken(t) { localStorage.setItem('jwt_token', t); }
+    function clearToken() { localStorage.removeItem('jwt_token'); }
+
+    function checkAuth() {
+      const token = getToken();
+      if (!token) {
+        document.getElementById('login-screen').classList.remove('hidden');
+        document.getElementById('app-main').classList.add('hidden');
+        lucide.createIcons();
+        return false;
+      }
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('app-main').classList.remove('hidden');
+      return true;
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const errEl = document.getElementById('login-error');
+      errEl.classList.add('hidden');
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true;
+      btn.textContent = 'Autenticando...';
+
+      try {
+        const res = await fetch(`${API}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('login-user').value.trim(),
+            password: document.getElementById('login-pass').value,
+          }),
+        });
+        const json = await res.json();
+        if (res.ok && json.token) {
+          setToken(json.token);
+          checkAuth();
+          loadCameras();
+          loadMosaics();
+          lucide.createIcons();
+        } else {
+          errEl.textContent = json.error || 'Credenciales inválidas';
+          errEl.classList.remove('hidden');
+        }
+      } catch (err) {
+        errEl.textContent = 'Error de conexión con el servidor';
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="log-in" class="w-4 h-4"></i> Iniciar sesión';
+        lucide.createIcons();
+      }
+    }
+
+    function logout() {
+      clearToken();
+      allCameras = [];
+      allMosaics = [];
+      checkAuth();
+      document.getElementById('login-user').value = '';
+      document.getElementById('login-pass').value = '';
+    }
+
+    async function authFetch(url, opts = {}) {
+      const token = getToken();
+      if (!token) { logout(); throw new Error('No token'); }
+      opts.headers = opts.headers || {};
+      opts.headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(url, opts);
+      if (res.status === 401) {
+        showToast('Sesión expirada. Inicia sesión de nuevo.', 'error');
+        logout();
+        throw new Error('Unauthorized');
+      }
+      return res;
+    }
+
+    // =====================================================================
+    // Init
+    // =====================================================================
+    document.addEventListener('DOMContentLoaded', () => {
+      if (checkAuth()) {
+        loadCameras();
+        loadMosaics();
+      }
+      lucide.createIcons();
+    });
+
+    // =====================================================================
+    // Tabs
+    // =====================================================================
+    function switchTab(tab) {
+      document.getElementById('panel-cameras').classList.toggle('hidden', tab !== 'cameras');
+      document.getElementById('panel-mosaics').classList.toggle('hidden', tab !== 'mosaics');
+      document.getElementById('tab-cameras').className = tab === 'cameras' ? 'py-3 px-1 text-sm tab-active transition' : 'py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition';
+      document.getElementById('tab-mosaics').className = tab === 'mosaics' ? 'py-3 px-1 text-sm tab-active transition' : 'py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition';
+    }
+
+    // =====================================================================
+    // Cameras
+    // =====================================================================
+    async function loadCameras(search) {
+      try {
+        const q = search ? `?search=${encodeURIComponent(search)}` : '';
+        const res = await authFetch(`${API}/api/cameras${q}`);
+        const json = await res.json();
+        if (json.success) {
+          allCameras = json.data;
+          renderCameras(allCameras);
+          document.getElementById('camera-count').textContent = `${allCameras.length} cámaras registradas`;
+        }
+      } catch (e) {
+        showToast('Error cargando cámaras', 'error');
+      }
+    }
+
+    function renderCameras(cameras) {
+      const grid = document.getElementById('camera-grid');
+      const empty = document.getElementById('camera-empty');
+      if (!cameras.length) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      grid.innerHTML = cameras.map(c => `
+        <div class="cam-card bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex items-center gap-2 cursor-pointer" data-edit-id="${c.id}" onclick="openCameraModal(this.dataset.editId * 1)">
+              <span class="status-dot ${c.enabled ? 'on' : 'off'}"></span>
+              <h4 class="font-medium text-sm text-white truncate max-w-[180px]">${esc(c.name)}</h4>
+            </div>
+            <div class="flex gap-1">
+              <button data-view-id="${c.id}" onclick="openViewer(this.dataset.viewId * 1)" class="p-1.5 text-gray-500 hover:text-blue-400 transition rounded" title="Ver en vivo">
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+              </button>
+              <button data-del-id="${c.id}" onclick="deleteCameraById(this.dataset.delId * 1)" class="p-1.5 text-gray-500 hover:text-red-400 transition rounded" title="Eliminar">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+          <div class="space-y-1.5 text-xs text-gray-400">
+            <div class="flex items-center gap-2"><i data-lucide="globe" class="w-3 h-3"></i> ${esc(c.host)}:${c.port}</div>
+            <div class="flex items-center gap-2"><i data-lucide="user" class="w-3 h-3"></i> ${c.username || '(sin auth)'}</div>
+            <div class="flex items-center gap-2"><i data-lucide="link" class="w-3 h-3"></i><span class="truncate">${esc(c.path)}</span></div>
+          </div>
+          <div class="mt-3 flex items-center gap-2">
+            ${c.record ? '<span class="text-[10px] px-2 py-0.5 bg-green-900/40 text-green-400 rounded-full">REC</span>' : ''}
+            ${c.source_on_demand ? '<span class="text-[10px] px-2 py-0.5 bg-blue-900/40 text-blue-400 rounded-full">ON-DEMAND</span>' : '<span class="text-[10px] px-2 py-0.5 bg-yellow-900/40 text-yellow-400 rounded-full">24/7</span>'}
+            <span class="text-[10px] px-2 py-0.5 bg-gray-800 text-gray-400 rounded-full uppercase">${c.protocol}</span>
+            <button data-view-id="${c.id}" onclick="openViewer(this.dataset.viewId * 1)" class="ml-auto text-[10px] px-2 py-0.5 bg-blue-600/30 text-blue-400 rounded-full hover:bg-blue-600/50 transition cursor-pointer flex items-center gap-1">
+              <i data-lucide="play" class="w-2.5 h-2.5"></i> Ver
+            </button>
+          </div>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    function debouncedSearch() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        loadCameras(document.getElementById('camera-search').value);
+      }, 300);
+    }
+
+    // =====================================================================
+    // Camera Modal
+    // =====================================================================
+    function openCameraModal(id) {
+      const modal = document.getElementById('camera-modal');
+      const title = document.getElementById('camera-modal-title');
+      document.getElementById('cam-error').classList.add('hidden');
+
+      if (id) {
+        title.textContent = 'Editar Cámara';
+        const cam = allCameras.find(c => c.id === id);
+        if (!cam) return;
+        document.getElementById('cam-id').value = cam.id;
+        document.getElementById('cam-name').value = cam.name;
+        document.getElementById('cam-host').value = cam.host;
+        document.getElementById('cam-port').value = cam.port;
+        document.getElementById('cam-user').value = cam.username || '';
+        document.getElementById('cam-pass').value = cam.password || '';
+        document.getElementById('cam-path').value = cam.path;
+        document.getElementById('cam-protocol').value = cam.protocol;
+        document.getElementById('cam-enabled').checked = cam.enabled;
+        document.getElementById('cam-record').checked = cam.record;
+        document.getElementById('cam-ondemand').checked = cam.source_on_demand;
+      } else {
+        title.textContent = 'Nueva Cámara';
+        document.getElementById('cam-id').value = '';
+        document.getElementById('camera-form').reset();
+        document.getElementById('cam-port').value = '554';
+        document.getElementById('cam-path').value = '/defaultPrimary?streamType=m';
+        document.getElementById('cam-enabled').checked = true;
+        document.getElementById('cam-record').checked = true;
+        document.getElementById('cam-ondemand').checked = false;
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeCameraModal() {
+      document.getElementById('camera-modal').classList.add('hidden');
+    }
+
+    async function saveCameraForm(e) {
+      e.preventDefault();
+      const id = document.getElementById('cam-id').value;
+      const body = {
+        name: document.getElementById('cam-name').value.trim(),
+        host: document.getElementById('cam-host').value.trim(),
+        port: parseInt(document.getElementById('cam-port').value) || 554,
+        username: document.getElementById('cam-user').value.trim(),
+        password: document.getElementById('cam-pass').value.trim(),
+        path: document.getElementById('cam-path').value.trim(),
+        protocol: document.getElementById('cam-protocol').value,
+        enabled: document.getElementById('cam-enabled').checked,
+        record: document.getElementById('cam-record').checked,
+        source_on_demand: document.getElementById('cam-ondemand').checked,
+      };
+
+      try {
+        const url = id ? `${API}/api/cameras/${id}` : `${API}/api/cameras`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const json = await res.json();
+        if (json.success) {
+          closeCameraModal();
+          loadCameras();
+          showToast(id ? 'Cámara actualizada' : 'Cámara creada', 'success');
+        } else {
+          document.getElementById('cam-error').textContent = json.error || 'Error desconocido';
+          document.getElementById('cam-error').classList.remove('hidden');
+        }
+      } catch (e) {
+        document.getElementById('cam-error').textContent = 'Error de conexión';
+        document.getElementById('cam-error').classList.remove('hidden');
+      }
+    }
+
+    async function deleteCameraById(id) {
+      const cam = allCameras.find(c => c.id === id);
+      const name = cam ? cam.name : `ID ${id}`;
+      if (!confirm(`¿Eliminar la cámara "${name}"?`)) return;
+      try {
+        const res = await authFetch(`${API}/api/cameras/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          loadCameras();
+          showToast('Cámara eliminada', 'success');
+        } else {
+          showToast(json.error || 'Error eliminando', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    async function syncAllCameras() {
+      try {
+        showToast('Sincronizando...', 'info');
+        const res = await authFetch(`${API}/api/cameras/sync`, { method: 'POST' });
+        const json = await res.json();
+        if (json.success) {
+          showToast(json.data, 'success');
+        } else {
+          showToast(json.error || 'Error', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    // =====================================================================
+    // Mosaics
+    // =====================================================================
+    async function loadMosaics() {
+      try {
+        const res = await authFetch(`${API}/api/mosaics`);
+        const json = await res.json();
+        if (json.success) {
+          allMosaics = json.data;
+          renderMosaics(allMosaics);
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    function renderMosaics(mosaics) {
+      const grid = document.getElementById('mosaic-grid');
+      const empty = document.getElementById('mosaic-empty');
+      if (!mosaics.length) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      grid.innerHTML = mosaics.map(m => `
+        <div class="cam-card bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h4 class="font-medium text-white">${esc(m.name)}</h4>
+              <p class="text-xs text-gray-500">Layout: ${m.layout} &middot; ${m.cameras.length} cámaras</p>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="status-dot ${m.active ? 'on' : 'off'}"></span>
+              <span class="text-xs ${m.active ? 'text-green-400' : 'text-gray-500'}">${m.active ? 'Activo' : 'Detenido'}</span>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mb-4">
+            ${m.cameras.map(c => `<span class="text-[10px] px-2 py-0.5 bg-gray-800 text-gray-300 rounded-full">${esc(c.camera_name)}</span>`).join('')}
+          </div>
+          <div class="flex gap-2">
+            ${m.active
+              ? `<button onclick="stopMosaic(${m.id})" class="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-sm transition"><i data-lucide="square" class="w-3.5 h-3.5"></i> Detener</button>`
+              : `<button onclick="startMosaic(${m.id})" class="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-green-600/20 hover:bg-green-600/30 text-green-400 rounded-lg text-sm transition"><i data-lucide="play" class="w-3.5 h-3.5"></i> Iniciar</button>`
+            }
+            ${m.active ? `<button onclick="viewMosaic('${esc(m.name)}')" class="flex items-center justify-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg text-sm transition"><i data-lucide="eye" class="w-3.5 h-3.5"></i> Ver</button>` : ''}
+            <button onclick="openMosaicModal(${m.id})" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+            <button onclick="deleteMosaicConfirm(${m.id}, '${esc(m.name)}')" class="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-red-400 rounded-lg text-sm transition"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+          </div>
+          ${m.active ? `<div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
+            <span><i data-lucide="tv" class="w-3 h-3 inline"></i> <a href="${location.protocol}//${location.hostname}:8889/mosaic-${esc(m.name)}" target="_blank" class="text-blue-400 hover:underline">WebRTC</a></span>
+            <span><i data-lucide="radio" class="w-3 h-3 inline"></i> <a href="${location.protocol}//${location.hostname}:8888/mosaic-${esc(m.name)}/index.m3u8" target="_blank" class="text-blue-400 hover:underline">HLS</a></span>
+          </div>` : ''}
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    async function startMosaic(id) {
+      try {
+        showToast('Iniciando mosaico...', 'info');
+        const res = await authFetch(`${API}/api/mosaics/${id}/start`, { method: 'POST' });
+        const json = await res.json();
+        if (json.success) {
+          showToast(json.data, 'success');
+          loadMosaics();
+        } else {
+          showToast(json.error || 'Error', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    async function stopMosaic(id) {
+      try {
+        const res = await authFetch(`${API}/api/mosaics/${id}/stop`, { method: 'POST' });
+        const json = await res.json();
+        if (json.success) {
+          showToast('Mosaico detenido', 'success');
+          loadMosaics();
+        } else {
+          showToast(json.error || 'Error', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    // =====================================================================
+    // Mosaic Modal
+    // =====================================================================
+    function openMosaicModal(id) {
+      const modal = document.getElementById('mosaic-modal');
+      const title = document.getElementById('mosaic-modal-title');
+      document.getElementById('mos-error').classList.add('hidden');
+      selectedMosaicCameras = [];
+
+      if (id) {
+        title.textContent = 'Editar Mosaico';
+        const mos = allMosaics.find(m => m.id === id);
+        if (!mos) return;
+        document.getElementById('mos-id').value = mos.id;
+        document.getElementById('mos-name').value = mos.name;
+        document.getElementById('mos-layout').value = mos.layout;
+        selectedMosaicCameras = mos.cameras.map(c => ({ id: c.camera_id, name: c.camera_name }));
+      } else {
+        title.textContent = 'Nuevo Mosaico';
+        document.getElementById('mos-id').value = '';
+        document.getElementById('mos-name').value = '';
+        document.getElementById('mos-layout').value = '2x2';
+      }
+
+      renderMosaicCameraList();
+      updateMosaicPreview();
+      modal.classList.remove('hidden');
+    }
+
+    function closeMosaicModal() {
+      document.getElementById('mosaic-modal').classList.add('hidden');
+    }
+
+    function renderMosaicCameraList(filter) {
+      const list = document.getElementById('mos-cam-list');
+      let cams = allCameras.filter(c => c.enabled);
+      if (filter) {
+        const q = filter.toLowerCase();
+        cams = cams.filter(c => c.name.toLowerCase().includes(q) || c.host.includes(q));
+      }
+      list.innerHTML = cams.map(c => {
+        const selected = selectedMosaicCameras.some(s => s.id === c.id);
+        return `<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-700 cursor-pointer text-sm ${selected ? 'bg-blue-900/20' : ''}">
+          <input type="checkbox" ${selected ? 'checked' : ''} onchange="toggleMosaicCamera(${c.id}, '${esc(c.name)}', this.checked)" class="rounded bg-gray-700 border-gray-600 text-blue-600">
+          <span>${esc(c.name)}</span>
+          <span class="text-gray-500 text-xs ml-auto">${c.host}</span>
+        </label>`;
+      }).join('');
+      renderSelectedCameras();
+    }
+
+    function filterMosaicCameras() {
+      renderMosaicCameraList(document.getElementById('mos-cam-search').value);
+    }
+
+    function toggleMosaicCamera(id, name, checked) {
+      const layout = document.getElementById('mos-layout').value;
+      const [c, r] = layout.split('x').map(Number);
+      const max = c * r;
+
+      if (checked) {
+        if (selectedMosaicCameras.length >= max) {
+          showToast(`Máximo ${max} cámaras para layout ${layout}`, 'error');
+          renderMosaicCameraList(document.getElementById('mos-cam-search').value);
+          return;
+        }
+        selectedMosaicCameras.push({ id, name });
+      } else {
+        selectedMosaicCameras = selectedMosaicCameras.filter(c => c.id !== id);
+      }
+      renderMosaicCameraList(document.getElementById('mos-cam-search').value);
+    }
+
+    function removeSelectedCamera(id) {
+      selectedMosaicCameras = selectedMosaicCameras.filter(c => c.id !== id);
+      renderMosaicCameraList(document.getElementById('mos-cam-search').value);
+    }
+
+    function renderSelectedCameras() {
+      const container = document.getElementById('mos-selected');
+      const noCams = document.getElementById('mos-no-cams');
+      const layout = document.getElementById('mos-layout').value;
+      const [c, r] = layout.split('x').map(Number);
+      document.getElementById('mos-selected-count').textContent = selectedMosaicCameras.length;
+      document.getElementById('mos-max-count').textContent = c * r;
+
+      if (!selectedMosaicCameras.length) {
+        container.innerHTML = '<span class="text-gray-500 text-sm">Selecciona cámaras de la lista</span>';
+        return;
+      }
+      container.innerHTML = selectedMosaicCameras.map(c =>
+        `<span class="inline-flex items-center gap-1 px-2 py-1 bg-blue-900/30 text-blue-300 rounded text-xs">
+          ${esc(c.name)}
+          <button onclick="removeSelectedCamera(${c.id})" class="text-blue-400 hover:text-red-400">&times;</button>
+        </span>`
+      ).join('');
+    }
+
+    function updateMosaicPreview() {
+      const layout = document.getElementById('mos-layout').value;
+      const [c, r] = layout.split('x').map(Number);
+      document.getElementById('mos-max-count').textContent = c * r;
+      // Trim selected if over limit
+      if (selectedMosaicCameras.length > c * r) {
+        selectedMosaicCameras = selectedMosaicCameras.slice(0, c * r);
+      }
+      renderSelectedCameras();
+    }
+
+    async function saveMosaicForm(e) {
+      e.preventDefault();
+      const id = document.getElementById('mos-id').value;
+      const body = {
+        name: document.getElementById('mos-name').value.trim(),
+        layout: document.getElementById('mos-layout').value,
+        camera_ids: selectedMosaicCameras.map(c => c.id),
+      };
+
+      if (!body.camera_ids.length) {
+        document.getElementById('mos-error').textContent = 'Selecciona al menos una cámara';
+        document.getElementById('mos-error').classList.remove('hidden');
+        return;
+      }
+
+      try {
+        const url = id ? `${API}/api/mosaics/${id}` : `${API}/api/mosaics`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const json = await res.json();
+        if (json.success) {
+          closeMosaicModal();
+          loadMosaics();
+          showToast(id ? 'Mosaico actualizado' : 'Mosaico creado', 'success');
+        } else {
+          document.getElementById('mos-error').textContent = json.error || 'Error desconocido';
+          document.getElementById('mos-error').classList.remove('hidden');
+        }
+      } catch (e) {
+        document.getElementById('mos-error').textContent = 'Error de conexión';
+        document.getElementById('mos-error').classList.remove('hidden');
+      }
+    }
+
+    async function deleteMosaicConfirm(id, name) {
+      if (!confirm(`¿Eliminar el mosaico "${name}"?`)) return;
+      try {
+        const res = await authFetch(`${API}/api/mosaics/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          loadMosaics();
+          showToast('Mosaico eliminado', 'success');
+        } else {
+          showToast(json.error || 'Error', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    // =====================================================================
+    // Camera Viewer with Zoom & Pan (WebRTC primary, HLS fallback)
+    // =====================================================================
+    let hlsInstance = null;
+    let webrtcPc = null;
+    let viewerScale = 1;
+    let viewerPanX = 0;
+    let viewerPanY = 0;
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecording = false;
+
+    function openViewer(id) {
+      const cam = allCameras.find(c => c.id === id);
+      if (!cam) return;
+      openStreamViewer(cam.name);
+    }
+
+    function viewMosaic(name) {
+      openStreamViewer('mosaic-' + name);
+    }
+
+    function openStreamViewer(streamName) {
+      const webrtcUrl = `${location.protocol}//${location.hostname}:8889/${streamName}/whep`;
+      const hlsUrl = `${location.protocol}//${location.hostname}:8888/${streamName}/index.m3u8`;
+      document.getElementById('viewer-title').textContent = streamName;
+      document.getElementById('viewer-url').textContent = `WebRTC: ${webrtcUrl}`;
+      document.getElementById('viewer-error').classList.add('hidden');
+      document.getElementById('viewer-loading').style.display = 'flex';
+      document.getElementById('viewer-modal').classList.remove('hidden');
+
+      viewerScale = 1;
+      viewerPanX = 0;
+      viewerPanY = 0;
+      applyViewerTransform();
+
+      const video = document.getElementById('viewer-video');
+      cleanupViewer();
+
+      // Try WebRTC first (lower latency), fallback to HLS
+      tryWebRTC(video, webrtcUrl, hlsUrl);
+      lucide.createIcons();
+    }
+
+    async function tryWebRTC(video, webrtcUrl, hlsUrl) {
+      try {
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+        webrtcPc = pc;
+
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+
+        pc.ontrack = (evt) => {
+          if (evt.streams && evt.streams[0]) {
+            video.srcObject = evt.streams[0];
+            document.getElementById('viewer-loading').style.display = 'none';
+            video.play().catch(() => {});
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            console.warn('WebRTC failed, falling back to HLS');
+            cleanupWebRTC();
+            startHLS(video, hlsUrl);
+          }
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        // Wait for ICE gathering to complete (or timeout)
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === 'complete') { resolve(); return; }
+          const checkState = () => {
+            if (pc.iceGatheringState === 'complete') {
+              pc.removeEventListener('icegatheringstatechange', checkState);
+              resolve();
+            }
+          };
+          pc.addEventListener('icegatheringstatechange', checkState);
+          setTimeout(resolve, 2000);
+        });
+
+        const resp = await fetch(webrtcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: pc.localDescription.sdp,
+        });
+
+        if (!resp.ok) throw new Error(`WHEP response ${resp.status}`);
+
+        const answer = await resp.text();
+        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answer }));
+
+        document.getElementById('viewer-url').textContent = `WebRTC: ${webrtcUrl}`;
+
+        // If no track arrives within 5s, fallback
+        setTimeout(() => {
+          if (video.srcObject === null && webrtcPc === pc) {
+            console.warn('WebRTC no track received, falling back to HLS');
+            cleanupWebRTC();
+            startHLS(video, hlsUrl);
+          }
+        }, 5000);
+
+      } catch (e) {
+        console.warn('WebRTC error, falling back to HLS:', e);
+        cleanupWebRTC();
+        startHLS(video, hlsUrl);
+      }
+    }
+
+    function startHLS(video, hlsUrl) {
+      document.getElementById('viewer-url').textContent = `HLS: ${hlsUrl}`;
+      video.srcObject = null;
+
+      if (Hls.isSupported()) {
+        hlsInstance = new Hls({ liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 5, lowLatencyMode: true });
+        hlsInstance.loadSource(hlsUrl);
+        hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+          document.getElementById('viewer-loading').style.display = 'none';
+          video.play().catch(() => {});
+        });
+        hlsInstance.on(Hls.Events.ERROR, (e, data) => {
+          if (data.fatal) {
+            document.getElementById('viewer-loading').style.display = 'none';
+            document.getElementById('viewer-error').textContent =
+              'No se pudo conectar al stream. Verifica que la cámara esté activa y sincronizada con MediaMTX.';
+            document.getElementById('viewer-error').classList.remove('hidden');
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = hlsUrl;
+        video.addEventListener('loadedmetadata', () => {
+          document.getElementById('viewer-loading').style.display = 'none';
+          video.play().catch(() => {});
+        }, { once: true });
+      } else {
+        document.getElementById('viewer-loading').style.display = 'none';
+        document.getElementById('viewer-error').textContent = 'Tu navegador no soporta HLS ni WebRTC.';
+        document.getElementById('viewer-error').classList.remove('hidden');
+      }
+    }
+
+    function cleanupWebRTC() {
+      if (webrtcPc) { try { webrtcPc.close(); } catch(e) {} webrtcPc = null; }
+    }
+
+    function cleanupViewer() {
+      if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+      cleanupWebRTC();
+      const video = document.getElementById('viewer-video');
+      video.srcObject = null;
+      video.src = '';
+    }
+
+    function closeViewer() {
+      document.getElementById('viewer-modal').classList.add('hidden');
+      cleanupViewer();
+    }
+
+    function viewerZoom(delta, mouseX, mouseY) {
+      const video = document.getElementById('viewer-video');
+      const rect = video.getBoundingClientRect();
+      const cx = mouseX !== undefined ? mouseX - rect.left : rect.width / 2;
+      const cy = mouseY !== undefined ? mouseY - rect.top : rect.height / 2;
+      
+      const oldScale = viewerScale;
+      const newScale = Math.min(8, Math.max(1, viewerScale + delta));
+      
+      if (newScale === 1) { 
+        viewerScale = 1;
+        viewerPanX = 0;
+        viewerPanY = 0;
+      } else {
+        // Adjust pan to keep mouse position centered
+        const scaleRatio = newScale / oldScale;
+        viewerPanX = cx - (cx - viewerPanX) * scaleRatio;
+        viewerPanY = cy - (cy - viewerPanY) * scaleRatio;
+        viewerScale = newScale;
+        clampPan();
+      }
+      applyViewerTransform();
+    }
+
+    function viewerZoomReset() {
+      viewerScale = 1;
+      viewerPanX = 0;
+      viewerPanY = 0;
+      applyViewerTransform();
+    }
+
+    function applyViewerTransform() {
+      const video = document.getElementById('viewer-video');
+      video.style.transform = `translate(${viewerPanX}px, ${viewerPanY}px) scale(${viewerScale})`;
+      document.getElementById('zoom-badge').textContent = viewerScale.toFixed(1) + 'x';
+    }
+
+    function clampPan() {
+      const wrap = document.getElementById('viewer-wrap');
+      if (!wrap) return;
+      const w = wrap.clientWidth;
+      const h = wrap.clientHeight;
+      const maxX = (viewerScale - 1) * w;
+      const maxY = (viewerScale - 1) * h;
+      viewerPanX = Math.min(0, Math.max(-maxX, viewerPanX));
+      viewerPanY = Math.min(0, Math.max(-maxY, viewerPanY));
+    }
+
+    // Mouse wheel zoom
+    document.addEventListener('DOMContentLoaded', () => {
+      const wrap = document.getElementById('viewer-wrap');
+      wrap.addEventListener('wheel', (e) => {
+        if (document.getElementById('viewer-modal').classList.contains('hidden')) return;
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.2 : -0.2;
+        viewerZoom(delta, e.clientX, e.clientY);
+      }, { passive: false });
+
+      // Pan with mouse drag
+      wrap.addEventListener('mousedown', (e) => {
+        if (viewerScale <= 1) return;
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        panStartX = viewerPanX;
+        panStartY = viewerPanY;
+        wrap.classList.add('dragging');
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        viewerPanX = panStartX + (e.clientX - dragStartX);
+        viewerPanY = panStartY + (e.clientY - dragStartY);
+        clampPan();
+        applyViewerTransform();
+      });
+      document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        document.getElementById('viewer-wrap').classList.remove('dragging');
+      });
+
+      // Escape key closes modals
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          if (!document.getElementById('viewer-modal').classList.contains('hidden')) closeViewer();
+          else if (!document.getElementById('camera-modal').classList.contains('hidden')) closeCameraModal();
+          else if (!document.getElementById('mosaic-modal').classList.contains('hidden')) closeMosaicModal();
+        }
+      });
+    });
+
+    function toggleViewerFullscreen() {
+      const el = document.getElementById('viewer-wrap');
+      if (!document.fullscreenElement) {
+        el.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // Screenshot capture
+    function captureScreenshot() {
+      const video = document.getElementById('viewer-video');
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      
+      // Apply current transform to canvas
+      ctx.save();
+      ctx.translate(canvas.width/2, canvas.height/2);
+      ctx.scale(viewerScale, viewerScale);
+      ctx.translate(-canvas.width/2 + viewerPanX, -canvas.height/2 + viewerPanY);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      
+      // Download screenshot
+      canvas.toBlob((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Captura de pantalla guardada', 'success');
+      });
+    }
+
+    // Video recording
+    function toggleRecording() {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    }
+
+    function startRecording() {
+      const video = document.getElementById('viewer-video');
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      
+      const stream = canvas.captureStream(30); // 30 FPS
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9',
+        videoBitsPerSecond: 2500000
+      });
+      
+      recordedChunks = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `recording-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Grabación guardada', 'success');
+      };
+      
+      // Draw frames to canvas
+      const drawFrame = () => {
+        if (!isRecording) return;
+        
+        ctx.save();
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.scale(viewerScale, viewerScale);
+        ctx.translate(-canvas.width/2 + viewerPanX, -canvas.height/2 + viewerPanY);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        
+        requestAnimationFrame(drawFrame);
+      };
+      
+      mediaRecorder.start();
+      isRecording = true;
+      drawFrame();
+      
+      // Update button
+      document.getElementById('record-btn').textContent = '⏹️';
+      document.getElementById('record-btn').style.background = 'rgba(239, 68, 68, 0.8)';
+      showToast('Grabación iniciada', 'info');
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        isRecording = false;
+        
+        // Update button
+        document.getElementById('record-btn').textContent = '🔴';
+        document.getElementById('record-btn').style.background = '';
+        showToast('Grabación detenida', 'info');
+      }
+    }
+
+    // Stop recording when viewer closes
+    const originalCloseViewer = closeViewer;
+    closeViewer = function() {
+      if (isRecording) {
+        stopRecording();
+      }
+      originalCloseViewer();
+    };
+
+    // =====================================================================
+    // Utils
+    // =====================================================================
+    function showToast(msg, type) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg text-sm shadow-lg fade-in ${
+        type === 'success' ? 'bg-green-800 text-green-100' :
+        type === 'error' ? 'bg-red-800 text-red-100' :
+        'bg-blue-800 text-blue-100'
+      }`;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 3500);
+    }
+
+    function esc(str) {
+      if (!str) return '';
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
