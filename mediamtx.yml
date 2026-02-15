@@ -131,6 +131,7 @@ pathDefaults:
   sourceOnDemandStartTimeout: 10s
   sourceOnDemandCloseAfter: 30s
   maxReaders: 0
+  rtspTransport: tcp
   fallback:
   useAbsoluteTimestamp: false
 
@@ -179,9 +180,11 @@ paths:
     overridePublisher: yes
     sourceOnDemand: no
 
-  # Entrnace cameras
+  # Entrance cameras
+  # NOTE: entrance-guardhouse-bottom y entrance-guardhouse-top apuntan al mismo
+  #       dispositivo 10.0.0.30. Si son canales distintos, usar ?camera=1 / ?camera=2
   entrance-guardhouse-bottom:
-    source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp
+    source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp?camera=1
     sourceFingerprint: ""
     sourceOnDemand: no
     record: yes
@@ -193,7 +196,7 @@ paths:
     overridePublisher: no
 
   entrance-guardhouse-top:
-    source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp
+    source: rtsp://root:dynamics8249@10.0.0.30/axis-media/media.amp?camera=2
     sourceFingerprint: ""
     sourceOnDemand: no
     record: yes

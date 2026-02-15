@@ -1,0 +1,31 @@
+# =============================================================================
+# Docker Compose - Producción (Linux con network_mode: host)
+# =============================================================================
+#
+# Uso en servidor Linux (acceso directo a cámaras LAN 10.0.0.x):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# network_mode: host elimina la capa NAT de Docker y permite que MediaMTX
+# se conecte directamente a las cámaras en la red local.
+# =============================================================================
+
+services:
+  mediamtx-backend:
+    network_mode: host
+    ports: !reset []
+    environment:
+      - SERVER_PORT=8080
+      - JWT_EXP_MINUTES=60
+      - RUST_LOG=info
+      - DATABASE_PATH=/app/data/cameras.db
+      - MEDIAMTX_API_URL=http://127.0.0.1:9997
+      - MEDIAMTX_API_USER=admin
+      - MEDIAMTX_API_PASS=mediamtx_secret
+    networks: !reset []
+
+  mediamtx:
+    network_mode: host
+    ports: !reset []
+    networks: !reset []
+
+networks: !reset {}

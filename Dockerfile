@@ -1,10 +1,27 @@
 # =============================================================================
-# Dockerfile para MediaMTX Auth Backend (Rust)
+# Dockerfile para MediaMTX Auth Backend (Rust) + SvelteKit Frontend
 # Build multi-stage para imagen final mínima
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Etapa 1: Build
+# Etapa 1: Build Frontend (SvelteKit)
+# -----------------------------------------------------------------------------
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+# Copiar archivos de dependencias primero para cachear
+COPY frontend/package.json frontend/package-lock.json* ./
+
+RUN npm ci
+
+# Copiar código fuente del frontend
+COPY frontend/ ./
+
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Etapa 2: Build Backend (Rust)
 # -----------------------------------------------------------------------------
 FROM rust:bookworm AS builder
 
@@ -26,7 +43,7 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # -----------------------------------------------------------------------------
-# Etapa 2: Runtime (imagen mínima)
+# Etapa 3: Runtime (imagen mínima)
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
@@ -42,8 +59,8 @@ WORKDIR /app
 # Copiar binario compilado
 COPY --from=builder /app/target/release/mediamtx-auth-backend /app/mediamtx-auth-backend
 
-# Copiar archivos estáticos de la UI
-COPY static /app/static
+# Copiar archivos estáticos de la UI (SvelteKit build output)
+COPY --from=frontend-builder /app/frontend/build /app/static
 
 # Crear directorio para datos (SQLite DB)
 RUN mkdir -p /app/data

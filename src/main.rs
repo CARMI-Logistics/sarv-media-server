@@ -9,11 +9,12 @@ mod db;
 mod models;
 mod camera;
 mod mosaic;
+mod location;
 
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
     middleware::{self, Next},
     response::Response,
@@ -716,6 +717,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/:id/stop", post(mosaic::stop_mosaic))
         .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
 
+    // Subrouter de locations (protegido por JWT)
+    let location_routes = Router::new()
+        .route("/", get(location::list_locations).post(location::create_location))
+        .route("/:id", put(location::update_location).delete(location::delete_location))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Subrouter de areas (protegido por JWT)
+    let area_routes = Router::new()
+        .route("/", get(location::list_areas).post(location::create_area))
+        .route("/:id", put(location::update_area).delete(location::delete_area))
+        .route("/location/:location_id", get(location::list_areas_by_location))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
     // Static files directory
     let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "/app/static".to_string());
     info!("Sirviendo archivos estáticos desde: {}", static_dir);
@@ -727,6 +741,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/auth/login", post(login))
         .nest("/api/cameras", camera_routes)
         .nest("/api/mosaics", mosaic_routes)
+        .nest("/api/locations", location_routes)
+        .nest("/api/areas", area_routes)
         .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
         .route("/openapi.json", get(openapi_json))
         .with_state(state)

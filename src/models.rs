@@ -2,6 +2,50 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 // ============================================================================
+// Location and Area models
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct Location {
+    #[serde(default)]
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct Area {
+    #[serde(default)]
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub location_id: i64,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
+pub struct AreaWithLocation {
+    #[serde(default)]
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub location_id: i64,
+    pub location_name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+// ============================================================================
 // Camera models
 // ============================================================================
 
@@ -27,6 +71,10 @@ pub struct Camera {
     pub record: bool,
     #[serde(default)]
     pub source_on_demand: bool,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default)]
+    pub area: String,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]

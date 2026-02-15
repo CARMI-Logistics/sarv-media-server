@@ -21,7 +21,24 @@ impl Database {
     fn init_tables(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS cameras (
+            "CREATE TABLE IF NOT EXISTS locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT DEFAULT '',
+                is_system INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS areas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                location_id INTEGER NOT NULL,
+                description TEXT DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS cameras (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 host TEXT NOT NULL,
@@ -33,6 +50,8 @@ impl Database {
                 enabled INTEGER NOT NULL DEFAULT 1,
                 record INTEGER NOT NULL DEFAULT 1,
                 source_on_demand INTEGER NOT NULL DEFAULT 1,
+                location TEXT DEFAULT '',
+                area TEXT DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -55,6 +74,68 @@ impl Database {
                 FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
             );"
         )?;
+        
+        // Run migrations to add new columns without losing data
+        // Pass the already-locked connection to avoid Mutex deadlock
+        Self::run_migrations(&conn)?;
+        
+        Ok(())
+    }
+
+    fn run_migrations(conn: &Connection) -> Result<()> {
+        
+        // Check if is_system column exists in locations table
+        let column_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('locations') WHERE name='is_system'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0) > 0;
+        
+        if !column_exists {
+            // Add is_system column with default value 0 (false)
+            conn.execute(
+                "ALTER TABLE locations ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+            info!("Migration: Added is_system column to locations table");
+        }
+
+        // Check if location column exists in cameras table
+        let location_col_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cameras') WHERE name='location'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0) > 0;
+
+        if !location_col_exists {
+            conn.execute(
+                "ALTER TABLE cameras ADD COLUMN location TEXT DEFAULT ''",
+                [],
+            )?;
+            info!("Migration: Added location column to cameras table");
+        }
+
+        // Check if area column exists in cameras table
+        let area_col_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cameras') WHERE name='area'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0) > 0;
+
+        if !area_col_exists {
+            conn.execute(
+                "ALTER TABLE cameras ADD COLUMN area TEXT DEFAULT ''",
+                [],
+            )?;
+            info!("Migration: Added area column to cameras table");
+        }
+        
         Ok(())
     }
 
@@ -69,8 +150,8 @@ impl Database {
         if let Some(q) = search {
             let like = format!("%{}%", q);
             let mut stmt = conn.prepare(
-                "SELECT id, name, host, port, username, password, path, protocol, enabled, record, source_on_demand, created_at, updated_at 
-                 FROM cameras WHERE name LIKE ?1 OR host LIKE ?1 ORDER BY name"
+                "SELECT id, name, host, port, username, password, path, protocol, enabled, record, source_on_demand, location, area, created_at, updated_at 
+                 FROM cameras WHERE name LIKE ?1 OR host LIKE ?1 OR location LIKE ?1 OR area LIKE ?1 ORDER BY name"
             )?;
             let rows = stmt.query_map(params![like], |row| {
                 Ok(Camera {
@@ -85,8 +166,10 @@ impl Database {
                     enabled: row.get(8)?,
                     record: row.get(9)?,
                     source_on_demand: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    location: row.get(11)?,
+                    area: row.get(12)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
                 })
             })?;
             for row in rows {
@@ -94,7 +177,7 @@ impl Database {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, name, host, port, username, password, path, protocol, enabled, record, source_on_demand, created_at, updated_at 
+                "SELECT id, name, host, port, username, password, path, protocol, enabled, record, source_on_demand, location, area, created_at, updated_at 
                  FROM cameras ORDER BY name"
             )?;
             let rows = stmt.query_map([], |row| {
@@ -110,8 +193,10 @@ impl Database {
                     enabled: row.get(8)?,
                     record: row.get(9)?,
                     source_on_demand: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    location: row.get(11)?,
+                    area: row.get(12)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
                 })
             })?;
             for row in rows {
@@ -124,7 +209,7 @@ impl Database {
     pub fn get_camera(&self, id: i64) -> Result<Option<Camera>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, host, port, username, password, path, protocol, enabled, record, source_on_demand, created_at, updated_at 
+            "SELECT id, name, host, port, username, password, path, protocol, enabled, record, source_on_demand, location, area, created_at, updated_at 
              FROM cameras WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -140,8 +225,10 @@ impl Database {
                 enabled: row.get(8)?,
                 record: row.get(9)?,
                 source_on_demand: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+                location: row.get(11)?,
+                area: row.get(12)?,
+                created_at: row.get(13)?,
+                updated_at: row.get(14)?,
             })
         })?;
         match rows.next() {
@@ -153,9 +240,9 @@ impl Database {
     pub fn create_camera(&self, cam: &Camera) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO cameras (name, host, port, username, password, path, protocol, enabled, record, source_on_demand) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![cam.name, cam.host, cam.port, cam.username, cam.password, cam.path, cam.protocol, cam.enabled, cam.record, cam.source_on_demand],
+            "INSERT INTO cameras (name, host, port, username, password, path, protocol, enabled, record, source_on_demand, location, area) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![cam.name, cam.host, cam.port, cam.username, cam.password, cam.path, cam.protocol, cam.enabled, cam.record, cam.source_on_demand, cam.location, cam.area],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -163,9 +250,9 @@ impl Database {
     pub fn update_camera(&self, id: i64, cam: &Camera) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute(
-            "UPDATE cameras SET name=?1, host=?2, port=?3, username=?4, password=?5, path=?6, protocol=?7, enabled=?8, record=?9, source_on_demand=?10, updated_at=datetime('now')
-             WHERE id=?11",
-            params![cam.name, cam.host, cam.port, cam.username, cam.password, cam.path, cam.protocol, cam.enabled, cam.record, cam.source_on_demand, id],
+            "UPDATE cameras SET name=?1, host=?2, port=?3, username=?4, password=?5, path=?6, protocol=?7, enabled=?8, record=?9, source_on_demand=?10, location=?11, area=?12, updated_at=datetime('now')
+             WHERE id=?13",
+            params![cam.name, cam.host, cam.port, cam.username, cam.password, cam.path, cam.protocol, cam.enabled, cam.record, cam.source_on_demand, cam.location, cam.area, id],
         )?;
         Ok(rows > 0)
     }
@@ -352,12 +439,155 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         for (name, host, port, user, pass, path, proto) in cameras {
             conn.execute(
-                "INSERT OR IGNORE INTO cameras (name, host, port, username, password, path, protocol, enabled, record, source_on_demand)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0)",
-                params![name, host, port, user, pass, path, proto],
+                "INSERT OR IGNORE INTO cameras (name, host, port, username, password, path, protocol, enabled, record, source_on_demand, location, area)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1, 0, ?8, ?9)",
+                params![name, host, port, user, pass, path, proto, "Warehouse 1", "Entrance"],
             )?;
         }
         info!("Seed completado: 17 cámaras insertadas");
         Ok(())
+    }
+
+    // =========================================================================
+    // Location CRUD
+    // =========================================================================
+
+    pub fn list_locations(&self) -> Result<Vec<crate::models::Location>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, description, is_system, created_at FROM locations ORDER BY name")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(crate::models::Location {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                is_system: row.get::<_, i64>(3)? != 0,
+                created_at: row.get(4)?,
+            })
+        })?;
+        
+        let mut locations = Vec::new();
+        for row in rows {
+            locations.push(row?);
+        }
+        Ok(locations)
+    }
+
+    pub fn create_location(&self, location: &crate::models::Location) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO locations (name, description, is_system) VALUES (?1, ?2, ?3)",
+            params![location.name, location.description, if location.is_system { 1 } else { 0 }],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_location(&self, id: i64, location: &crate::models::Location) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE locations SET name=?1, description=?2, is_system=?3 WHERE id=?4",
+            params![location.name, location.description, if location.is_system { 1 } else { 0 }, id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn get_location(&self, id: i64) -> Result<Option<crate::models::Location>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, description, is_system, created_at FROM locations WHERE id=?1")?;
+        let mut rows = stmt.query(params![id])?;
+        
+        if let Some(row) = rows.next()? {
+            Ok(Some(crate::models::Location {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                is_system: row.get::<_, i64>(3)? != 0,
+                created_at: row.get(4)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn delete_location(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM locations WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    // =========================================================================
+    // Area CRUD
+    // =========================================================================
+
+    pub fn list_areas(&self) -> Result<Vec<crate::models::AreaWithLocation>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.name, a.location_id, l.name as location_name, a.description, a.created_at 
+             FROM areas a 
+             JOIN locations l ON a.location_id = l.id 
+             ORDER BY l.name, a.name"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(crate::models::AreaWithLocation {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                location_id: row.get(2)?,
+                location_name: row.get(3)?,
+                description: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        
+        let mut areas = Vec::new();
+        for row in rows {
+            areas.push(row?);
+        }
+        Ok(areas)
+    }
+
+    pub fn list_areas_by_location(&self, location_id: i64) -> Result<Vec<crate::models::Area>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, location_id, description, created_at 
+             FROM areas WHERE location_id = ?1 ORDER BY name"
+        )?;
+        let rows = stmt.query_map(params![location_id], |row| {
+            Ok(crate::models::Area {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                location_id: row.get(2)?,
+                description: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        
+        let mut areas = Vec::new();
+        for row in rows {
+            areas.push(row?);
+        }
+        Ok(areas)
+    }
+
+    pub fn create_area(&self, area: &crate::models::Area) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO areas (name, location_id, description) VALUES (?1, ?2, ?3)",
+            params![area.name, area.location_id, area.description],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_area(&self, id: i64, area: &crate::models::Area) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE areas SET name=?1, location_id=?2, description=?3 WHERE id=?4",
+            params![area.name, area.location_id, area.description, id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn delete_area(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM areas WHERE id=?1", params![id])?;
+        Ok(rows > 0)
     }
 }

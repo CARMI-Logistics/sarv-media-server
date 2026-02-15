@@ -22,11 +22,28 @@
     .viewer-container { position: relative; overflow: hidden; cursor: grab; background: #000; border-radius: 8px; }
     .viewer-container.dragging { cursor: grabbing; }
     .viewer-container video { transform-origin: center center; transition: none; display: block; width: 100%; }
-    .zoom-controls { position: absolute; bottom: 12px; right: 12px; display: flex; gap: 4px; z-index: 10; }
-    .zoom-controls button { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; cursor: pointer; font-size: 16px; backdrop-filter: blur(8px); transition: background 0.15s; }
+    .zoom-controls { position: absolute; bottom: 12px; right: 12px; display: flex; gap: 4px; z-index: 10; flex-wrap: wrap; max-width: 280px; }
+    .zoom-controls button { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; cursor: pointer; font-size: 14px; backdrop-filter: blur(8px); transition: background 0.15s; }
     .zoom-controls button:hover { background: rgba(59,130,246,0.6); }
+    .zoom-controls button.recording { background: rgba(239, 68, 68, 0.8); animation: pulse 2s infinite; }
     .zoom-badge { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 10px; border-radius: 6px; font-size: 12px; z-index: 10; backdrop-filter: blur(8px); }
     .viewer-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); z-index: 5; }
+    
+    /* Mobile responsive */
+    @media (max-width: 768px) {
+      .cam-grid { grid-template-columns: 1fr !important; }
+      .mosaic-grid { grid-template-columns: 1fr !important; }
+      .modal-content { width: 95% !important; margin: 1rem !important; max-height: 90vh !important; overflow-y: auto !important; }
+      .viewer-modal { width: 100% !important; height: 100% !important; margin: 0 !important; border-radius: 0 !important; }
+      .zoom-controls { bottom: 8px !important; right: 8px !important; gap: 2px !important; }
+      .zoom-controls button { width: 32px !important; height: 32px !important; font-size: 12px !important; }
+      .zoom-badge { top: 8px !important; left: 8px !important; font-size: 11px !important; }
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
   </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen">
@@ -88,12 +105,18 @@
   </header>
 
   <!-- Tabs -->
-  <div class="bg-gray-900 border-b border-gray-800 px-6 flex gap-6">
-    <button onclick="switchTab('cameras')" id="tab-cameras" class="py-3 px-1 text-sm tab-active transition">
-      <span class="flex items-center gap-2"><i data-lucide="camera" class="w-4 h-4"></i> Cámaras</span>
+  <div class="bg-gray-900 border-b border-gray-800 px-6 flex gap-6 overflow-x-auto">
+    <button onclick="switchTab('cameras')" id="tab-cameras" class="py-3 px-1 text-sm tab-active transition whitespace-nowrap">
+      <i data-lucide="video" class="w-4 h-4 inline mr-2"></i>Cámaras
     </button>
-    <button onclick="switchTab('mosaics')" id="tab-mosaics" class="py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition">
-      <span class="flex items-center gap-2"><i data-lucide="layout-grid" class="w-4 h-4"></i> Mosaicos</span>
+    <button onclick="switchTab('mosaics')" id="tab-mosaics" class="py-3 px-1 text-sm transition whitespace-nowrap">
+      <i data-lucide="grid-3x3" class="w-4 h-4 inline mr-2"></i>Mosaicos
+    </button>
+    <button onclick="switchTab('locations')" id="tab-locations" class="py-3 px-1 text-sm transition whitespace-nowrap">
+      <i data-lucide="map-pin" class="w-4 h-4 inline mr-2"></i>Ubicaciones
+    </button>
+    <button onclick="switchTab('areas')" id="tab-areas" class="py-3 px-1 text-sm transition whitespace-nowrap">
+      <i data-lucide="layers" class="w-4 h-4 inline mr-2"></i>Áreas
     </button>
   </div>
 
@@ -102,11 +125,48 @@
 
     <!-- ================= CAMERAS TAB ================= -->
     <div id="panel-cameras">
+      <!-- Filters Section -->
+      <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-gray-300">Filtros</h3>
+          <button onclick="clearFilters()" class="text-xs text-gray-500 hover:text-gray-300 transition">Limpiar filtros</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Ubicaciones</label>
+            <select id="filter-locations" multiple class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" size="3">
+              <!-- Populated by JS -->
+            </select>
+            <p class="text-xs text-gray-500 mt-1">Ctrl+Click para selección múltiple</p>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Áreas</label>
+            <select id="filter-areas" multiple class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" size="3">
+              <!-- Populated by JS -->
+            </select>
+            <p class="text-xs text-gray-500 mt-1">Ctrl+Click para selección múltiple</p>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Estado</label>
+            <div class="space-y-2">
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" id="filter-enabled" checked class="rounded bg-gray-600 border-gray-500 text-blue-600 focus:ring-blue-500">
+                Habilitadas
+              </label>
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" id="filter-recording" checked class="rounded bg-gray-600 border-gray-500 text-blue-600 focus:ring-blue-500">
+                Grabando
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Search + Add -->
       <div class="flex items-center justify-between mb-6 gap-4">
         <div class="relative flex-1 max-w-md">
           <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"></i>
-          <input type="text" id="camera-search" placeholder="Buscar cámaras por nombre o IP..."
+          <input type="text" id="camera-search" placeholder="Buscar cámaras por nombre, IP, ubicación o área..."
             class="w-full bg-gray-800 border border-gray-700 rounded-lg pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-blue-500 transition"
             oninput="debouncedSearch()">
         </div>
@@ -139,6 +199,40 @@
       <div id="mosaic-empty" class="hidden text-center py-16 text-gray-500">
         <i data-lucide="layout-grid" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
         <p>No hay mosaicos creados</p>
+      </div>
+    </div>
+
+    <!-- ================= LOCATIONS TAB ================= -->
+    <div id="panel-locations" class="hidden">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-lg font-semibold">Ubicaciones</h2>
+        <button onclick="openLocationModal()" class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">
+          <i data-lucide="plus" class="w-4 h-4"></i> Nueva Ubicación
+        </button>
+      </div>
+      <div id="location-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Populated by JS -->
+      </div>
+      <div id="location-empty" class="hidden text-center py-16 text-gray-500">
+        <i data-lucide="map-pin-off" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+        <p>No hay ubicaciones creadas</p>
+      </div>
+    </div>
+
+    <!-- ================= AREAS TAB ================= -->
+    <div id="panel-areas" class="hidden">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-lg font-semibold">Áreas</h2>
+        <button onclick="openAreaModal()" class="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">
+          <i data-lucide="plus" class="w-4 h-4"></i> Nueva Área
+        </button>
+      </div>
+      <div id="area-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Populated by JS -->
+      </div>
+      <div id="area-empty" class="hidden text-center py-16 text-gray-500">
+        <i data-lucide="layers" class="w-12 h-12 mx-auto mb-3 opacity-50"></i>
+        <p>No hay áreas creadas</p>
       </div>
     </div>
   </main>
@@ -180,7 +274,7 @@
           <label class="block text-sm text-gray-400 mb-1">Path RTSP</label>
           <input type="text" id="cam-path" value="/defaultPrimary?streamType=m" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
         </div>
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-sm text-gray-400 mb-1">Protocolo</label>
             <select id="cam-protocol" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
@@ -188,6 +282,22 @@
               <option value="rtmp">RTMP</option>
             </select>
           </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Ubicación</label>
+            <select id="cam-location" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+              <option value="">Seleccionar ubicación</option>
+              <!-- Populated by JS -->
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Área</label>
+          <select id="cam-area" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+            <option value="">Seleccionar área (primero elige ubicación)</option>
+            <!-- Populated by JS -->
+          </select>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
           <div class="flex items-end">
             <label class="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" id="cam-enabled" checked class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
@@ -200,12 +310,12 @@
               Grabar
             </label>
           </div>
-        </div>
-        <div class="flex items-center">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" id="cam-ondemand" checked class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
-            Source on Demand (conectar solo cuando alguien vea)
-          </label>
+          <div class="flex items-end">
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" id="cam-ondemand" class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
+              On-demand
+            </label>
+          </div>
         </div>
         <div id="cam-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
         <div class="flex justify-end gap-3 pt-2">
@@ -263,6 +373,71 @@
         <div id="mos-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
         <div class="flex justify-end gap-3 pt-2">
           <button type="button" onclick="closeMosaicModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= LOCATION MODAL ================= -->
+  <div id="location-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay bg-black/50">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-md mx-4 fade-in shadow-2xl">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h3 id="location-modal-title" class="text-lg font-semibold">Nueva Ubicación</h3>
+        <button onclick="closeLocationModal()" class="text-gray-400 hover:text-white transition"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="location-form" onsubmit="saveLocationForm(event)" class="p-6 space-y-4">
+        <input type="hidden" id="loc-id" value="">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Nombre *</label>
+          <input type="text" id="loc-name" required class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="ej: Warehouse 1">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Descripción</label>
+          <textarea id="loc-description" rows="3" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="Descripción opcional de la ubicación"></textarea>
+        </div>
+        <div>
+          <label class="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" id="loc-is-system" class="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500">
+            <span class="text-gray-300">Ubicación del sistema <span class="text-xs text-gray-500">(no se puede eliminar)</span></span>
+          </label>
+        </div>
+        <div id="loc-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" onclick="closeLocationModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= AREA MODAL ================= -->
+  <div id="area-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay bg-black/50">
+    <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-md mx-4 fade-in shadow-2xl">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+        <h3 id="area-modal-title" class="text-lg font-semibold">Nueva Área</h3>
+        <button onclick="closeAreaModal()" class="text-gray-400 hover:text-white transition"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="area-form" onsubmit="saveAreaForm(event)" class="p-6 space-y-4">
+        <input type="hidden" id="area-id" value="">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Nombre *</label>
+          <input type="text" id="area-name" required class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="ej: Entrance">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Ubicación *</label>
+          <select id="area-location" required class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+            <option value="">Seleccionar ubicación</option>
+            <!-- Populated by JS -->
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Descripción</label>
+          <textarea id="area-description" rows="3" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="Descripción opcional del área"></textarea>
+        </div>
+        <div id="area-error" class="hidden text-red-400 text-sm bg-red-900/20 border border-red-800 rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" onclick="closeAreaModal()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">Cancelar</button>
           <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition">Guardar</button>
         </div>
       </form>
@@ -407,10 +582,18 @@
     }
 
     // =====================================================================
+    // Global Variables
+    // =====================================================================
+    let allLocations = [];
+    let allAreas = [];
+
+    // =====================================================================
     // Init
     // =====================================================================
     document.addEventListener('DOMContentLoaded', () => {
       if (checkAuth()) {
+        loadLocations();
+        loadAreas();
         loadCameras();
         loadMosaics();
       }
@@ -423,9 +606,363 @@
     function switchTab(tab) {
       document.getElementById('panel-cameras').classList.toggle('hidden', tab !== 'cameras');
       document.getElementById('panel-mosaics').classList.toggle('hidden', tab !== 'mosaics');
+      document.getElementById('panel-locations').classList.toggle('hidden', tab !== 'locations');
+      document.getElementById('panel-areas').classList.toggle('hidden', tab !== 'areas');
+      
       document.getElementById('tab-cameras').className = tab === 'cameras' ? 'py-3 px-1 text-sm tab-active transition' : 'py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition';
       document.getElementById('tab-mosaics').className = tab === 'mosaics' ? 'py-3 px-1 text-sm tab-active transition' : 'py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition';
+      document.getElementById('tab-locations').className = tab === 'locations' ? 'py-3 px-1 text-sm tab-active transition' : 'py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition';
+      document.getElementById('tab-areas').className = tab === 'areas' ? 'py-3 px-1 text-sm tab-active transition' : 'py-3 px-1 text-sm text-gray-400 hover:text-gray-200 transition';
     }
+
+    // =====================================================================
+    // Locations
+    // =====================================================================
+    async function loadLocations() {
+      try {
+        const res = await authFetch(`${API}/api/locations`);
+        const json = await res.json();
+        if (json.success) {
+          allLocations = json.data;
+          populateLocationDropdowns();
+          renderLocations();
+        }
+      } catch (e) {
+        showToast('Error cargando ubicaciones', 'error');
+      }
+    }
+
+    function renderLocations() {
+      const grid = document.getElementById('location-grid');
+      const empty = document.getElementById('location-empty');
+      if (!allLocations.length) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      grid.innerHTML = allLocations.map(loc => `
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-gray-600 transition">
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-blue-600/20 rounded-lg flex items-center justify-center">
+                <i data-lucide="map-pin" class="w-5 h-5 text-blue-400"></i>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h4 class="font-medium text-white">${loc.name}</h4>
+                  ${loc.is_system ? '<span class="px-2 py-0.5 bg-purple-600/20 text-purple-400 text-xs rounded-full border border-purple-600/30">Sistema</span>' : ''}
+                </div>
+                <p class="text-xs text-gray-500">ID: ${loc.id}</p>
+              </div>
+            </div>
+            <div class="flex gap-1">
+              <button onclick="editLocation(${loc.id})" class="p-1.5 text-gray-400 hover:text-blue-400 transition rounded hover:bg-gray-700">
+                <i data-lucide="edit-2" class="w-4 h-4"></i>
+              </button>
+              ${!loc.is_system ? `<button onclick="deleteLocation(${loc.id})" class="p-1.5 text-gray-400 hover:text-red-400 transition rounded hover:bg-gray-700">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>` : '<button disabled class="p-1.5 text-gray-600 cursor-not-allowed rounded" title="Las ubicaciones del sistema no se pueden eliminar"><i data-lucide="lock" class="w-4 h-4"></i></button>'}
+            </div>
+          </div>
+          ${loc.description ? `<p class="text-sm text-gray-400 mb-3">${loc.description}</p>` : ''}
+          <div class="text-xs text-gray-500">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="layers" class="w-3 h-3"></i>
+              ${allAreas.filter(a => a.location_id === loc.id).length} áreas
+            </span>
+          </div>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    function openLocationModal(id) {
+      const modal = document.getElementById('location-modal');
+      const title = document.getElementById('location-modal-title');
+      
+      if (id) {
+        title.textContent = 'Editar Ubicación';
+        const loc = allLocations.find(l => l.id === id);
+        if (!loc) return;
+        document.getElementById('loc-id').value = loc.id;
+        document.getElementById('loc-name').value = loc.name;
+        document.getElementById('loc-description').value = loc.description || '';
+        document.getElementById('loc-is-system').checked = loc.is_system || false;
+      } else {
+        title.textContent = 'Nueva Ubicación';
+        document.getElementById('location-form').reset();
+        document.getElementById('loc-id').value = '';
+        document.getElementById('loc-is-system').checked = false;
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeLocationModal() {
+      document.getElementById('location-modal').classList.add('hidden');
+    }
+
+    async function saveLocationForm(e) {
+      e.preventDefault();
+      const id = document.getElementById('loc-id').value;
+      const body = {
+        name: document.getElementById('loc-name').value.trim(),
+        description: document.getElementById('loc-description').value.trim(),
+        is_system: document.getElementById('loc-is-system').checked,
+      };
+
+      try {
+        const url = id ? `${API}/api/locations/${id}` : `${API}/api/locations`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const json = await res.json();
+        if (json.success) {
+          closeLocationModal();
+          loadLocations();
+          showToast(id ? 'Ubicación actualizada' : 'Ubicación creada', 'success');
+        } else {
+          document.getElementById('loc-error').textContent = json.error || 'Error desconocido';
+          document.getElementById('loc-error').classList.remove('hidden');
+        }
+      } catch (e) {
+        document.getElementById('loc-error').textContent = 'Error de conexión';
+        document.getElementById('loc-error').classList.remove('hidden');
+      }
+    }
+
+    async function deleteLocation(id) {
+      const loc = allLocations.find(l => l.id === id);
+      if (loc.is_system) {
+        showToast('No se pueden eliminar ubicaciones del sistema', 'error');
+        return;
+      }
+      if (!confirm(`¿Eliminar la ubicación "${loc.name}"? Esto también eliminará todas las áreas asociadas.`)) return;
+      try {
+        const res = await authFetch(`${API}/api/locations/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          loadLocations();
+          loadAreas();
+          showToast('Ubicación eliminada', 'success');
+        } else {
+          showToast(json.error || 'Error eliminando', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    function editLocation(id) {
+      openLocationModal(id);
+    }
+
+    // =====================================================================
+    // Areas
+    // =====================================================================
+    async function loadAreas() {
+      try {
+        const res = await authFetch(`${API}/api/areas`);
+        const json = await res.json();
+        if (json.success) {
+          allAreas = json.data;
+          populateAreaDropdowns();
+          renderAreas();
+        }
+      } catch (e) {
+        showToast('Error cargando áreas', 'error');
+      }
+    }
+
+    function renderAreas() {
+      const grid = document.getElementById('area-grid');
+      const empty = document.getElementById('area-empty');
+      if (!allAreas.length) {
+        grid.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+      grid.innerHTML = allAreas.map(area => `
+        <div class="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-gray-600 transition">
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-green-600/20 rounded-lg flex items-center justify-center">
+                <i data-lucide="layers" class="w-5 h-5 text-green-400"></i>
+              </div>
+              <div>
+                <h4 class="font-medium text-white">${area.name}</h4>
+                <p class="text-xs text-gray-500">${area.location_name}</p>
+              </div>
+            </div>
+            <div class="flex gap-1">
+              <button onclick="editArea(${area.id})" class="p-1.5 text-gray-400 hover:text-blue-400 transition rounded hover:bg-gray-700">
+                <i data-lucide="edit-2" class="w-4 h-4"></i>
+              </button>
+              <button onclick="deleteArea(${area.id})" class="p-1.5 text-gray-400 hover:text-red-400 transition rounded hover:bg-gray-700">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+          ${area.description ? `<p class="text-sm text-gray-400 mb-3">${area.description}</p>` : ''}
+          <div class="text-xs text-gray-500">
+            <span class="inline-flex items-center gap-1">
+              <i data-lucide="video" class="w-3 h-3"></i>
+              ${allCameras.filter(c => c.area === area.name && c.location === area.location_name).length} cámaras
+            </span>
+          </div>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    function openAreaModal(id) {
+      const modal = document.getElementById('area-modal');
+      const title = document.getElementById('area-modal-title');
+      
+      if (id) {
+        title.textContent = 'Editar Área';
+        const area = allAreas.find(a => a.id === id);
+        if (!area) return;
+        document.getElementById('area-id').value = area.id;
+        document.getElementById('area-name').value = area.name;
+        document.getElementById('area-location').value = area.location_id;
+        document.getElementById('area-description').value = area.description || '';
+      } else {
+        title.textContent = 'Nueva Área';
+        document.getElementById('area-form').reset();
+        document.getElementById('area-id').value = '';
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeAreaModal() {
+      document.getElementById('area-modal').classList.add('hidden');
+    }
+
+    async function saveAreaForm(e) {
+      e.preventDefault();
+      const id = document.getElementById('area-id').value;
+      const body = {
+        name: document.getElementById('area-name').value.trim(),
+        location_id: parseInt(document.getElementById('area-location').value),
+        description: document.getElementById('area-description').value.trim(),
+      };
+
+      try {
+        const url = id ? `${API}/api/areas/${id}` : `${API}/api/areas`;
+        const method = id ? 'PUT' : 'POST';
+        const res = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const json = await res.json();
+        if (json.success) {
+          closeAreaModal();
+          loadAreas();
+          showToast(id ? 'Área actualizada' : 'Área creada', 'success');
+        } else {
+          document.getElementById('area-error').textContent = json.error || 'Error desconocido';
+          document.getElementById('area-error').classList.remove('hidden');
+        }
+      } catch (e) {
+        document.getElementById('area-error').textContent = 'Error de conexión';
+        document.getElementById('area-error').classList.remove('hidden');
+      }
+    }
+
+    async function deleteArea(id) {
+      const area = allAreas.find(a => a.id === id);
+      if (!confirm(`¿Eliminar el área "${area.name}"?`)) return;
+      try {
+        const res = await authFetch(`${API}/api/areas/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          loadAreas();
+          showToast('Área eliminada', 'success');
+        } else {
+          showToast(json.error || 'Error eliminando', 'error');
+        }
+      } catch (e) {
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    function editArea(id) {
+      openAreaModal(id);
+    }
+
+    // =====================================================================
+    // Dropdowns and Filters
+    // =====================================================================
+    function populateLocationDropdowns() {
+      const options = '<option value="">Seleccionar ubicación</option>' + 
+        allLocations.map(loc => `<option value="${loc.id}">${loc.name}</option>`).join('');
+      
+      document.getElementById('cam-location').innerHTML = options;
+      document.getElementById('area-location').innerHTML = options;
+      document.getElementById('filter-locations').innerHTML = 
+        allLocations.map(loc => `<option value="${loc.name}">${loc.name}</option>`).join('');
+    }
+
+    function populateAreaDropdowns() {
+      // Update camera form area dropdown based on selected location
+      const locationSelect = document.getElementById('cam-location');
+      const areaSelect = document.getElementById('cam-area');
+      
+      locationSelect.addEventListener('change', () => {
+        const locationId = parseInt(locationSelect.value);
+        const location = allLocations.find(l => l.id === locationId);
+        const areas = locationId ? allAreas.filter(a => a.location_id === locationId) : [];
+        
+        areaSelect.innerHTML = locationId ? 
+          '<option value="">Seleccionar área</option>' + 
+          areas.map(area => `<option value="${area.name}">${area.name}</option>`).join('') :
+          '<option value="">Seleccionar área (primero elige ubicación)</option>';
+      });
+      
+      // Update filter areas dropdown
+      document.getElementById('filter-areas').innerHTML = 
+        allAreas.map(area => `<option value="${area.name}">${area.name} (${area.location_name})</option>`).join('');
+    }
+
+    function clearFilters() {
+      document.getElementById('filter-locations').selectedIndex = -1;
+      document.getElementById('filter-areas').selectedIndex = -1;
+      document.getElementById('filter-enabled').checked = true;
+      document.getElementById('filter-recording').checked = true;
+      document.getElementById('camera-search').value = '';
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const search = document.getElementById('camera-search').value.toLowerCase();
+      const selectedLocations = Array.from(document.getElementById('filter-locations').selectedOptions).map(opt => opt.value);
+      const selectedAreas = Array.from(document.getElementById('filter-areas').selectedOptions).map(opt => opt.value);
+      const enabledOnly = document.getElementById('filter-enabled').checked;
+      const recordingOnly = document.getElementById('filter-recording').checked;
+      
+      const filtered = allCameras.filter(cam => {
+        const matchesSearch = !search || 
+          cam.name.toLowerCase().includes(search) || 
+          cam.host.toLowerCase().includes(search) ||
+          cam.location.toLowerCase().includes(search) ||
+          cam.area.toLowerCase().includes(search);
+        
+        const matchesLocation = selectedLocations.length === 0 || selectedLocations.includes(cam.location);
+        const matchesArea = selectedAreas.length === 0 || selectedAreas.includes(cam.area);
+        const matchesEnabled = !enabledOnly || cam.enabled;
+        const matchesRecording = !recordingOnly || cam.record;
+        
+        return matchesSearch && matchesLocation && matchesArea && matchesEnabled && matchesRecording;
+      });
+      
+      renderCameras(filtered);
+    }
+
+    // Add event listeners for filters
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('filter-locations').addEventListener('change', applyFilters);
+      document.getElementById('filter-areas').addEventListener('change', applyFilters);
+      document.getElementById('filter-enabled').addEventListener('change', applyFilters);
+      document.getElementById('filter-recording').addEventListener('change', applyFilters);
+    });
 
     // =====================================================================
     // Cameras
@@ -437,7 +974,7 @@
         const json = await res.json();
         if (json.success) {
           allCameras = json.data;
-          renderCameras(allCameras);
+          applyFilters(); // Use filters instead of direct render
           document.getElementById('camera-count').textContent = `${allCameras.length} cámaras registradas`;
         }
       } catch (e) {
@@ -491,7 +1028,7 @@
     function debouncedSearch() {
       clearTimeout(searchTimeout);
       searchTimeout = setTimeout(() => {
-        loadCameras(document.getElementById('camera-search').value);
+        applyFilters();
       }, 300);
     }
 
@@ -518,6 +1055,15 @@
         document.getElementById('cam-enabled').checked = cam.enabled;
         document.getElementById('cam-record').checked = cam.record;
         document.getElementById('cam-ondemand').checked = cam.source_on_demand;
+        // Set location dropdown
+        const location = allLocations.find(l => l.name === cam.location);
+        if (location) {
+          document.getElementById('cam-location').value = location.id;
+          // Trigger change to populate areas, then set area
+          setTimeout(() => {
+            document.getElementById('cam-area').value = cam.area || '';
+          }, 100);
+        }
       } else {
         title.textContent = 'Nueva Cámara';
         document.getElementById('cam-id').value = '';
@@ -549,6 +1095,12 @@
         enabled: document.getElementById('cam-enabled').checked,
         record: document.getElementById('cam-record').checked,
         source_on_demand: document.getElementById('cam-ondemand').checked,
+        location: (() => {
+          const locationId = parseInt(document.getElementById('cam-location').value);
+          const location = allLocations.find(l => l.id === locationId);
+          return location ? location.name : '';
+        })(),
+        area: document.getElementById('cam-area').value.trim(),
       };
 
       try {
@@ -1164,10 +1716,10 @@
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       
-      const stream = canvas.captureStream(30); // 30 FPS
+      const stream = canvas.captureStream(20); // 20 FPS for performance
       mediaRecorder = new MediaRecorder(stream, {
         mimeType: 'video/webm;codecs=vp9',
-        videoBitsPerSecond: 2500000
+        videoBitsPerSecond: 1500000 // Lower bitrate for stability
       });
       
       recordedChunks = [];
@@ -1179,37 +1731,46 @@
       };
       
       mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `recording-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Grabación guardada', 'success');
+        // Process in background to not block UI
+        setTimeout(() => {
+          const blob = new Blob(recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `recording-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+          a.click();
+          URL.revokeObjectURL(url);
+          showToast('Grabación guardada', 'success');
+        }, 100);
       };
       
-      // Draw frames to canvas
+      // Optimized frame drawing with requestIdleCallback when possible
       const drawFrame = () => {
         if (!isRecording) return;
         
-        ctx.save();
-        ctx.translate(canvas.width/2, canvas.height/2);
-        ctx.scale(viewerScale, viewerScale);
-        ctx.translate(-canvas.width/2 + viewerPanX, -canvas.height/2 + viewerPanY);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        ctx.restore();
+        try {
+          ctx.save();
+          ctx.translate(canvas.width/2, canvas.height/2);
+          ctx.scale(viewerScale, viewerScale);
+          ctx.translate(-canvas.width/2 + viewerPanX, -canvas.height/2 + viewerPanY);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
+        } catch (e) {
+          console.error('Frame draw error:', e);
+        }
         
+        // Use requestAnimationFrame for smooth recording
         requestAnimationFrame(drawFrame);
       };
       
-      mediaRecorder.start();
+      mediaRecorder.start(1000); // Collect data every 1 second
       isRecording = true;
       drawFrame();
       
-      // Update button
-      document.getElementById('record-btn').textContent = '⏹️';
-      document.getElementById('record-btn').style.background = 'rgba(239, 68, 68, 0.8)';
+      // Update button with animation
+      const btn = document.getElementById('record-btn');
+      btn.textContent = '⏹️';
+      btn.classList.add('recording');
       showToast('Grabación iniciada', 'info');
     }
 
@@ -1219,8 +1780,9 @@
         isRecording = false;
         
         // Update button
-        document.getElementById('record-btn').textContent = '🔴';
-        document.getElementById('record-btn').style.background = '';
+        const btn = document.getElementById('record-btn');
+        btn.textContent = '🔴';
+        btn.classList.remove('recording');
         showToast('Grabación detenida', 'info');
       }
     }

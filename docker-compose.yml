@@ -44,6 +44,11 @@ services:
   # ---------------------------------------------------------------------------
   # MediaMTX - Servidor de Streaming
   # ---------------------------------------------------------------------------
+  # Puertos: 8554(RTSP), 8322(RTSPS), 1935-1936(RTMP),
+  #   8888(HLS), 8889(WebRTC), 8189/udp(ICE), 9997(API), 9998(Metrics),
+  #   8000-8007/udp(RTP/RTCP), 8890/udp(SRT)
+  # NOTA: En producción (Linux), usar docker-compose.prod.yml con network_mode: host
+  #       para acceso directo a cámaras LAN (10.0.0.x)
   mediamtx:
     image: bluenviron/mediamtx:latest
     container_name: mediamtx
@@ -69,17 +74,7 @@ services:
       # Metrics
       - "9998:9998"
       # RTP/RTCP
-      - "8000:8000/udp"
-      - "8001:8001/udp"
-      # Multicast RTP/RTCP
-      - "8002:8002/udp"
-      - "8003:8003/udp"
-      # SRTP/SRTCP
-      - "8004:8004/udp"
-      - "8005:8005/udp"
-      # Multicast SRTP/SRTCP
-      - "8006:8006/udp"
-      - "8007:8007/udp"
+      - "8000-8007:8000-8007/udp"
       # SRT
       - "8890:8890/udp"
     depends_on:
