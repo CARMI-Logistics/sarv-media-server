@@ -1,13 +1,18 @@
 # =============================================================================
-# Makefile - MediaMTX Auth Backend
+# Makefile - CamManager - Sistema Completo de Gestión de Cámaras
 # =============================================================================
 
 .PHONY: help build run up start stop down restart rebuild \
-        logs logs-backend logs-mediamtx \
-        dev check test fmt lint \
-        clean status health login jwks \
+        logs logs-backend logs-frontend logs-mediamtx logs-minio logs-sync \
+        dev dev-up dev-down dev-restart dev-logs \
+        check test fmt lint \
+        clean clean-recordings clean-logs clean-all \
+        status health login jwks \
         sync streams recordings reset-db \
-        shell-backend shell-mediamtx
+        s3-status s3-logs s3-sync s3-health s3-manual s3-ui \
+        backup backup-db backup-config \
+        maintenance clean-old-recordings monitor \
+        shell-backend shell-mediamtx shell-frontend shell-minio shell-sync
 
 # Colores para output
 CYAN := \033[36m
@@ -17,9 +22,19 @@ RED := \033[31m
 RESET := \033[0m
 
 help: ## Muestra esta ayuda
-	@echo "$(CYAN)MediaMTX Auth Backend$(RESET)"
+	@echo "$(CYAN)╔════════════════════════════════════════════════════╗$(RESET)"
+	@echo "$(CYAN)║  CamManager - Sistema de Gestión de Cámaras       ║$(RESET)"
+	@echo "$(CYAN)╚════════════════════════════════════════════════════╝$(RESET)"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(RESET) %s\n", $$1, $$2}'
+	@echo "$(YELLOW)Comandos disponibles:$(RESET)"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(CYAN)Uso rápido:$(RESET)"
+	@echo "  make dev-up        # Iniciar entorno de desarrollo"
+	@echo "  make dev-logs      # Ver logs en tiempo real"
+	@echo "  make s3-status     # Ver estado de sincronización S3"
+	@echo "  make maintenance   # Mantenimiento completo del sistema"
 
 # =============================================================================
 # Docker
@@ -74,6 +89,52 @@ logs-backend: ## Muestra logs del backend
 
 logs-mediamtx: ## Muestra logs de MediaMTX
 	docker compose logs -f mediamtx
+
+logs-frontend: ## Muestra logs del frontend
+	docker compose logs -f frontend
+
+logs-minio: ## Muestra logs de MinIO
+	docker compose logs -f minio
+
+logs-sync: ## Muestra logs de RClone Sync
+	docker compose logs -f rclone-sync
+
+# =============================================================================
+# Desarrollo (Hot Reload)
+# =============================================================================
+
+dev-up: ## Inicia entorno de desarrollo con hot reload
+	@echo "$(CYAN)Iniciando entorno de desarrollo...$(RESET)"
+	docker compose -f docker-compose.dev.yml up --build -d
+	@echo ""
+	@echo "$(GREEN)✓ Servicios de desarrollo iniciados:$(RESET)"
+	@echo "  $(CYAN)Frontend:$(RESET)  http://localhost:5173 (Vite HMR)"
+	@echo "  $(CYAN)Backend:$(RESET)   http://localhost:8080 (cargo watch)"
+	@echo "  $(CYAN)API Docs:$(RESET)  http://localhost:8080/docs"
+	@echo "  $(CYAN)MinIO:$(RESET)     http://localhost:9001 (admin/admin123)"
+	@echo "  $(CYAN)MediaMTX:$(RESET)  rtsp://localhost:8554"
+	@echo ""
+	@echo "$(YELLOW)Logs:$(RESET) make dev-logs"
+
+dev-down: ## Detiene entorno de desarrollo
+	@echo "$(YELLOW)Deteniendo desarrollo...$(RESET)"
+	docker compose -f docker-compose.dev.yml down
+
+dev-restart: ## Reinicia entorno de desarrollo
+	@echo "$(CYAN)Reiniciando desarrollo...$(RESET)"
+	docker compose -f docker-compose.dev.yml restart
+
+dev-logs: ## Muestra logs del entorno de desarrollo
+	docker compose -f docker-compose.dev.yml logs -f
+
+dev-rebuild: ## Rebuild completo del entorno de desarrollo
+	@echo "$(CYAN)Rebuild desarrollo...$(RESET)"
+	docker compose -f docker-compose.dev.yml down
+	docker compose -f docker-compose.dev.yml up --build -d
+	@make dev-up
+
+dev-status: ## Estado de servicios de desarrollo
+	@docker compose -f docker-compose.dev.yml ps
 
 # =============================================================================
 # Desarrollo local
@@ -158,8 +219,126 @@ login: ## Obtiene un token JWT de prueba
 jwks: ## Muestra el JWKS
 	@curl -s http://localhost:8080/jwks | jq .
 
-shell-backend: ## Abre shell en el contenedor del backend
-	docker compose exec mediamtx-backend /bin/bash
+# =============================================================================
+# S3 / MinIO - Sincronización y Backup
+# =============================================================================
 
-shell-mediamtx: ## Abre shell en el contenedor de MediaMTX
-	docker compose exec mediamtx /bin/sh
+s3-status: ## Muestra estado de sincronización S3
+	@echo "$(CYAN)Estado de Sincronización S3:$(RESET)"
+	@docker exec rclone-sync /health-check.sh 2>/dev/null || echo "$(RED)✗ RClone Sync no está corriendo$(RESET)"
+
+s3-logs: ## Muestra logs de sincronización
+	@docker exec rclone-sync tail -50 /logs/backup.log 2>/dev/null || echo "$(RED)No hay logs disponibles$(RESET)"
+
+s3-logs-live: ## Logs de sync en tiempo real
+	@docker exec rclone-sync tail -f /logs/backup.log
+
+s3-sync: ## Fuerza sincronización manual inmediata
+	@echo "$(CYAN)Ejecutando sincronización manual...$(RESET)"
+	@docker exec rclone-sync /manual-sync.sh
+
+s3-sync-dry: ## Simula sincronización (dry-run)
+	@echo "$(CYAN)Simulación de sincronización (dry-run):$(RESET)"
+	@docker exec rclone-sync /manual-sync.sh --dry-run
+
+s3-health: ## Verifica salud del sistema S3
+	@echo "$(CYAN)Health Check S3:$(RESET)"
+	@docker exec rclone-sync /health-check.sh
+
+s3-ui: ## Abre consola web de MinIO
+	@echo "$(CYAN)Abriendo MinIO Console...$(RESET)"
+	@echo "URL: http://localhost:9001"
+	@echo "User: minioadmin"
+	@echo "Pass: minioadmin123"
+	@open http://localhost:9001 2>/dev/null || xdg-open http://localhost:9001 2>/dev/null || echo "Abre manualmente: http://localhost:9001"
+
+s3-size: ## Muestra tamaño de bucket S3
+	@echo "$(CYAN)Tamaño del bucket S3:$(RESET)"
+	@docker exec rclone-sync rclone size minio:recordings 2>/dev/null || echo "$(RED)Error consultando tamaño$(RESET)"
+
+s3-list: ## Lista archivos en S3
+	@echo "$(CYAN)Archivos en S3 (últimos 20):$(RESET)"
+	@docker exec rclone-sync rclone ls minio:recordings 2>/dev/null | tail -20 || echo "$(RED)Error listando archivos$(RESET)"
+
+s3-restart: ## Reinicia servicio de sincronización
+	@echo "$(YELLOW)Reiniciando RClone Sync...$(RESET)"
+	@docker compose -f docker-compose.dev.yml restart rclone-sync
+
+# =============================================================================
+# Backup y Mantenimiento
+# =============================================================================
+
+backup-db: ## Backup de la base de datos
+	@echo "$(CYAN)Creando backup de base de datos...$(RESET)"
+	@mkdir -p ./backups
+	@docker exec backend-dev cat /app/data/cameras.db > ./backups/cameras_$(shell date +%Y%m%d_%H%M%S).db
+	@echo "$(GREEN)✓ Backup creado en ./backups/$(RESET)"
+
+backup-config: ## Backup de configuración
+	@echo "$(CYAN)Creando backup de configuración...$(RESET)"
+	@mkdir -p ./backups
+	@tar czf ./backups/config_$(shell date +%Y%m%d_%H%M%S).tar.gz \
+		docker-compose*.yml Makefile mediamtx.yml .env* scripts/ templates/ 2>/dev/null || true
+	@echo "$(GREEN)✓ Backup de configuración creado$(RESET)"
+
+backup: backup-db backup-config ## Backup completo (DB + config)
+
+clean-recordings: ## Limpia grabaciones antiguas (>7 días)
+	@echo "$(YELLOW)⚠ Limpiando grabaciones antiguas (>7 días)...$(RESET)"
+	@find ./recordings -type f -mtime +7 -delete 2>/dev/null || true
+	@echo "$(GREEN)✓ Limpieza completada$(RESET)"
+
+clean-logs: ## Limpia logs antiguos
+	@echo "$(YELLOW)Limpiando logs antiguos...$(RESET)"
+	@docker exec rclone-sync sh -c 'find /logs -type f -name "*.log.old" -delete' 2>/dev/null || true
+	@echo "$(GREEN)✓ Logs limpiados$(RESET)"
+
+clean-old-recordings: ## Limpia grabaciones >30 días
+	@echo "$(YELLOW)⚠ Limpiando grabaciones MUY antiguas (>30 días)...$(RESET)"
+	@find ./recordings -type f -mtime +30 -delete 2>/dev/null || true
+	@echo "$(GREEN)✓ Grabaciones antiguas eliminadas$(RESET)"
+
+maintenance: ## Mantenimiento completo del sistema
+	@echo "$(CYAN)╔════════════════════════════════════════╗$(RESET)"
+	@echo "$(CYAN)║  Mantenimiento del Sistema             ║$(RESET)"
+	@echo "$(CYAN)╚════════════════════════════════════════╝$(RESET)"
+	@echo ""
+	@echo "$(YELLOW)1. Backup de base de datos...$(RESET)"
+	@make backup-db
+	@echo ""
+	@echo "$(YELLOW)2. Backup de configuración...$(RESET)"
+	@make backup-config
+	@echo ""
+	@echo "$(YELLOW)3. Limpieza de logs antiguos...$(RESET)"
+	@make clean-logs
+	@echo ""
+	@echo "$(YELLOW)4. Verificando salud S3...$(RESET)"
+	@make s3-health
+	@echo ""
+	@echo "$(YELLOW)5. Estado de servicios...$(RESET)"
+	@make status
+	@echo ""
+	@echo "$(GREEN)✓ Mantenimiento completado$(RESET)"
+
+monitor: ## Monitor en tiempo real de todos los servicios
+	@echo "$(CYAN)Monitoreando servicios (Ctrl+C para salir)...$(RESET)"
+	@watch -n 5 'docker compose -f docker-compose.dev.yml ps'
+
+# =============================================================================
+# Shells
+# =============================================================================
+
+shell-backend: ## Shell en contenedor backend
+	@docker compose -f docker-compose.dev.yml exec backend-dev /bin/bash
+
+shell-mediamtx: ## Shell en contenedor MediaMTX
+	@docker compose -f docker-compose.dev.yml exec mediamtx /bin/sh
+
+shell-frontend: ## Shell en contenedor frontend
+	@docker compose -f docker-compose.dev.yml exec frontend-dev /bin/sh
+
+shell-minio: ## Shell en contenedor MinIO
+	@docker compose -f docker-compose.dev.yml exec minio /bin/sh
+
+shell-sync: ## Shell en contenedor RClone Sync
+	@docker compose -f docker-compose.dev.yml exec rclone-sync /bin/bash

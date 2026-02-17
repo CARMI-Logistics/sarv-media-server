@@ -1,0 +1,28 @@
+FROM alpine:latest
+
+# Install dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    ca-certificates \
+    coreutils \
+    findutils \
+    grep
+
+# Install rclone
+RUN curl -O https://downloads.rclone.org/rclone-current-linux-amd64.zip && \
+    unzip rclone-current-linux-amd64.zip && \
+    cd rclone-*-linux-amd64 && \
+    cp rclone /usr/bin/ && \
+    chmod 755 /usr/bin/rclone && \
+    cd .. && \
+    rm -rf rclone-*-linux-amd64*
+
+# Create directories
+RUN mkdir -p /config/rclone /logs /recordings
+
+# Set working directory
+WORKDIR /
+
+# Default command
+CMD ["/bin/bash", "/backup.sh"]

@@ -28,7 +28,7 @@ services:
       - /app/node_modules
     environment:
       - NODE_ENV=development
-      - VITE_API_URL=https://itchy-facts-throw.loca.lt
+      - VITE_API_URL=http://localhost:8080
     command: npm run dev -- --host 0.0.0.0
     networks:
       - dev-network
@@ -45,10 +45,12 @@ services:
       - "8080:8080"
     volumes:
       - ./src:/app/src
+      - ./templates:/app/templates
       - ./Cargo.toml:/app/Cargo.toml
       - ./Cargo.lock:/app/Cargo.lock
       - backend-data-dev:/app/data
       - ./recordings:/recordings
+      - backup-logs:/app/data/sync_logs
     environment:
       - SERVER_PORT=8080
       - JWT_EXP_MINUTES=60
@@ -91,8 +93,66 @@ services:
     networks:
       - dev-network
 
+  # ---------------------------------------------------------------------------
+  # MinIO S3 - Almacenamiento de objetos compatible con S3
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: minio-dev
+    ports:
+      - "9000:9000"  # API S3
+      - "9001:9001"  # Consola web
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev-network
+
+  # ---------------------------------------------------------------------------
+  # RClone Sync - Backup automático cada hora a MinIO S3
+  # ---------------------------------------------------------------------------
+  rclone-sync:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.rclone
+    container_name: rclone-sync
+    volumes:
+      - ./recordings:/recordings:ro
+      - ./scripts/rclone:/config/rclone
+      - ./scripts/backup.sh:/backup.sh:ro
+      - ./scripts/health-check.sh:/health-check.sh:ro
+      - ./scripts/manual-sync.sh:/manual-sync.sh:ro
+      - backup-logs:/logs
+    environment:
+      - RCLONE_CONFIG=/config/rclone/rclone.conf
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin123
+      - S3_BUCKET=recordings
+      - SYNC_INTERVAL=3600
+      - LOG_LEVEL=INFO
+    command: /bin/bash /backup.sh
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - dev-network
+    restart: unless-stopped
+
 volumes:
   backend-data-dev:
+    driver: local
+  minio-data:
+    driver: local
+  backup-logs:
     driver: local
 
 networks:

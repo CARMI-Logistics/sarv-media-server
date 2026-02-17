@@ -22,6 +22,22 @@ export interface ThumbnailResponse {
 	thumbnail_url: string | null;
 }
 
+export interface SyncStatus {
+	is_running: boolean;
+	last_sync: string | null;
+	next_sync_in: number | null;
+	files_synced: number;
+	total_size_gb: number;
+	errors: number;
+	status_message: string;
+}
+
+export interface SyncLog {
+	timestamp: string;
+	message: string;
+	level: string;
+}
+
 export interface Location {
 	id: number;
 	name: string;

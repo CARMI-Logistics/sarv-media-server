@@ -213,11 +213,23 @@ class AppStore {
 	}
 
 	// ── Mosaics ──
-	async loadMosaics() {
+	async loadMosaics(retryCount = 0) {
 		try {
 			const json = await apiGet<Mosaic[]>('/api/mosaics');
-			if (json.success && json.data) this.mosaics = json.data;
-		} catch { /* ignore */ }
+			if (json.success && json.data) {
+				this.mosaics = json.data;
+			} else if (retryCount < 2) {
+				// Retry con exponential backoff
+				await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+				return this.loadMosaics(retryCount + 1);
+			}
+		} catch (error) {
+			if (retryCount < 2) {
+				await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+				return this.loadMosaics(retryCount + 1);
+			}
+			// Silently fail después de 2 reintentos
+		}
 	}
 
 	async saveMosaic(id: number | null, body: { name: string; layout: string; camera_ids: number[] }) {
@@ -256,26 +268,31 @@ class AppStore {
 			const json = await apiPost<string>(`/api/mosaics/${id}/start`);
 			if (json.success) {
 				toast.success(json.data || 'Mosaico iniciado');
+				// Esperar un momento para que FFmpeg se estabilice
+				await new Promise(resolve => setTimeout(resolve, 1500));
 				await this.loadMosaics();
 			} else {
-				toast.error(json.error || 'Error');
+				toast.error(json.error || 'Error iniciando mosaico');
 			}
 		} catch {
-			toast.error('Error de conexión');
+			toast.error('Error de conexión al iniciar mosaico');
 		}
 	}
 
 	async stopMosaic(id: number) {
 		try {
+			toast.info('Deteniendo mosaico...');
 			const json = await apiPost<string>(`/api/mosaics/${id}/stop`);
 			if (json.success) {
-				toast.success('Mosaico detenido');
+				toast.success(json.data || 'Mosaico detenido');
+				// Esperar un momento para que el proceso termine completamente
+				await new Promise(resolve => setTimeout(resolve, 500));
 				await this.loadMosaics();
 			} else {
-				toast.error(json.error || 'Error');
+				toast.error(json.error || 'Error deteniendo mosaico');
 			}
 		} catch {
-			toast.error('Error de conexión');
+			toast.error('Error de conexión al detener mosaico');
 		}
 	}
 

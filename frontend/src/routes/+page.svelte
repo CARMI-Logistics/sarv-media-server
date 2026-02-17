@@ -17,6 +17,7 @@
 	import ConfirmDeleteDialog from '$lib/components/ConfirmDeleteDialog.svelte';
 	import NotificationPanel from '$lib/components/NotificationPanel.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import SyncMonitor from '$lib/components/SyncMonitor.svelte';
 	import {
 		Video, Layers, Plus, Search, CameraOff, LayoutGrid, MapPin, MapPinOff, Edit2, Trash2,
 		Lock, Eye, Pencil, Play, Square, Tv, Radio, Menu, Users, Shield, UserCheck, UserX,
@@ -273,6 +274,12 @@
 						</div>
 					</div>
 				{/if}
+				
+				<!-- Sync Monitor -->
+				<div class="mb-4">
+					<SyncMonitor />
+				</div>
+				
 				{#if app.filteredCameras.length > 0}
 					<p class="text-xs text-content-muted mb-3">{app.filteredCameras.length} de {app.cameras.length} cámaras</p>
 					<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">

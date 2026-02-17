@@ -18,6 +18,7 @@ mod mosaic_share;
 mod security;
 mod email;
 mod thumbnail;
+mod sync;
 
 use axum::{
     extract::State,
@@ -810,6 +811,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/:id/toggle", post(mosaic_share::toggle_share))
         .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
 
+    // Subrouter de sync status (protegido por JWT)
+    let sync_routes = Router::new()
+        .route("/status", get(sync::get_sync_status))
+        .route("/logs", get(sync::get_sync_logs))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
     // Static files directory
     let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "/app/static".to_string());
     info!("Sirviendo archivos estáticos desde: {}", static_dir);
@@ -832,6 +839,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/api/notifications", notification_routes)
         .nest("/api/roles", role_routes)
         .nest("/api/shares", share_routes)
+        .nest("/api/sync", sync_routes)
         // Serve captures and thumbnails as static files
         .nest_service("/data", ServeDir::new("/app/data"))
         .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
@@ -846,6 +854,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ServeDir::new(&static_dir)
                 .fallback(tower_http::services::ServeFile::new(format!("{}/index.html", static_dir)))
         );
+
+    // Limpiar mosaicos huérfanos de ejecuciones anteriores
+    if let Ok(count) = state.db.cleanup_orphaned_mosaics() {
+        if count > 0 {
+            info!("Limpiados {} mosaicos huérfanos de ejecuciones anteriores", count);
+        }
+    }
 
     // Iniciar servidor
     let addr = format!("0.0.0.0:{}", config.server_port);

@@ -1,7 +1,7 @@
 import { auth } from '$lib/stores/auth.svelte';
 import type { ApiResponse } from '$lib/types';
 
-// Prioridad: 1) VITE_API_URL (para túneles ngrok/localtunnel)
+// Prioridad: 1) VITE_API_URL (variable de entorno)
 //             2) DEV mode -> localhost:8080
 //             3) Producción -> mismo origen
 const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8080' : '');

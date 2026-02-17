@@ -484,6 +484,16 @@ impl Database {
         Ok(())
     }
 
+    /// Limpia todos los mosaicos activos al iniciar (procesos FFmpeg huérfanos)
+    pub fn cleanup_orphaned_mosaics(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute(
+            "UPDATE mosaics SET active=0, pid=NULL WHERE active=1",
+            [],
+        )?;
+        Ok(count)
+    }
+
     // =========================================================================
     // Seed existing cameras from mediamtx.yml
     // =========================================================================
