@@ -301,7 +301,7 @@ impl AppState {
 
 async fn jwt_auth(
     State(state): State<Arc<AppState>>,
-    req: Request<axum::body::Body>,
+    mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
     let auth_header = req.headers()
@@ -322,7 +322,11 @@ async fn jwt_auth(
     validation.set_required_spec_claims(&["sub", "exp"]);
 
     match decode::<Claims>(token, &state.decoding_key, &validation) {
-        Ok(_) => Ok(next.run(req).await),
+        Ok(token_data) => {
+            // Guardar username en las extensiones de la request para uso en middleware de autorización
+            req.extensions_mut().insert(token_data.claims.sub.clone());
+            Ok(next.run(req).await)
+        }
         Err(e) => {
             warn!("JWT inválido: {}", e);
             let msg = match e.kind() {

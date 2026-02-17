@@ -1096,6 +1096,56 @@ impl Database {
         Ok(rows > 0)
     }
 
+    /// Obtiene los permisos de un usuario basado en su rol
+    pub fn get_user_permissions(&self, username: &str) -> Result<Vec<Permission>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.role_id, p.module, p.can_view, p.can_create, p.can_edit, p.can_delete 
+             FROM role_permissions p
+             JOIN roles r ON p.role_id = r.id
+             JOIN users u ON u.role = r.name
+             WHERE u.username = ?1"
+        )?;
+        let perms: Vec<Permission> = stmt.query_map(params![username], |row| {
+            Ok(Permission {
+                id: row.get(0)?,
+                role_id: row.get(1)?,
+                module: row.get(2)?,
+                can_view: row.get::<_, i64>(3)? != 0,
+                can_create: row.get::<_, i64>(4)? != 0,
+                can_edit: row.get::<_, i64>(5)? != 0,
+                can_delete: row.get::<_, i64>(6)? != 0,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+        Ok(perms)
+    }
+
+    /// Verifica si un usuario tiene un permiso específico
+    pub fn check_permission(&self, username: &str, module: &str, action: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let permission_field = match action {
+            "view" => "can_view",
+            "create" => "can_create",
+            "edit" => "can_edit",
+            "delete" => "can_delete",
+            _ => return Ok(false),
+        };
+        
+        let query = format!(
+            "SELECT p.{} FROM role_permissions p
+             JOIN roles r ON p.role_id = r.id
+             JOIN users u ON u.role = r.name
+             WHERE u.username = ?1 AND p.module = ?2",
+            permission_field
+        );
+        
+        let has_perm: bool = conn.query_row(&query, params![username, module], |row| {
+            row.get::<_, i64>(0)
+        }).map(|v| v != 0).unwrap_or(false);
+        
+        Ok(has_perm)
+    }
+
     // =========================================================================
     // Settings
     // =========================================================================
