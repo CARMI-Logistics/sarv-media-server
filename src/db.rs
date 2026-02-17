@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result, params};
 use std::sync::Mutex;
 use tracing::info;
 
-use crate::models::{Camera, Mosaic, MosaicCamera, MosaicWithCameras};
+use crate::models::{Camera, Mosaic, MosaicCamera, MosaicWithCameras, User, UserPublic, Capture, Notification, Role, Permission, RoleWithPermissions, PermissionInput, MosaicShare};
 
 pub struct Database {
     pub conn: Mutex<Connection>,
@@ -72,6 +72,87 @@ impl Database {
                 PRIMARY KEY (mosaic_id, camera_id),
                 FOREIGN KEY (mosaic_id) REFERENCES mosaics(id) ON DELETE CASCADE,
                 FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'viewer',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                expires_at TEXT NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS captures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                camera_id INTEGER NOT NULL,
+                camera_name TEXT NOT NULL,
+                capture_type TEXT NOT NULL DEFAULT 'screenshot',
+                file_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL DEFAULT 'system',
+                title TEXT NOT NULL,
+                message TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'info',
+                read INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT DEFAULT '',
+                is_system INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role_id INTEGER NOT NULL,
+                module TEXT NOT NULL,
+                can_view INTEGER NOT NULL DEFAULT 0,
+                can_create INTEGER NOT NULL DEFAULT 0,
+                can_edit INTEGER NOT NULL DEFAULT 0,
+                can_delete INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+                UNIQUE(role_id, module)
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS mosaic_shares (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mosaic_id INTEGER NOT NULL,
+                mosaic_name TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                emails TEXT NOT NULL DEFAULT '',
+                expires_at TEXT NOT NULL,
+                schedule_start TEXT,
+                schedule_end TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (mosaic_id) REFERENCES mosaics(id) ON DELETE CASCADE
             );"
         )?;
         
@@ -588,6 +669,526 @@ impl Database {
     pub fn delete_area(&self, id: i64) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute("DELETE FROM areas WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    // =========================================================================
+    // User CRUD
+    // =========================================================================
+
+    pub fn seed_admin_user(&self, password_hash: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
+        if count > 0 {
+            info!("Users table already has {} users, skipping admin seed", count);
+            return Ok(());
+        }
+        conn.execute(
+            "INSERT INTO users (username, email, password_hash, role, active) VALUES (?1, ?2, ?3, ?4, 1)",
+            params!["admin", "admin@example.com", password_hash, "admin"],
+        )?;
+        info!("Seeded default admin user (admin / admin)");
+        Ok(())
+    }
+
+    pub fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, username, email, password_hash, role, active, created_at, updated_at FROM users WHERE username=?1"
+        )?;
+        let mut rows = stmt.query_map(params![username], |row| {
+            Ok(User {
+                id: row.get(0)?, username: row.get(1)?, email: row.get(2)?,
+                password_hash: row.get(3)?, role: row.get(4)?, active: row.get(5)?,
+                created_at: row.get(6)?, updated_at: row.get(7)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, username, email, password_hash, role, active, created_at, updated_at FROM users WHERE email=?1"
+        )?;
+        let mut rows = stmt.query_map(params![email], |row| {
+            Ok(User {
+                id: row.get(0)?, username: row.get(1)?, email: row.get(2)?,
+                password_hash: row.get(3)?, role: row.get(4)?, active: row.get(5)?,
+                created_at: row.get(6)?, updated_at: row.get(7)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_user_by_id(&self, id: i64) -> Result<Option<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, username, email, password_hash, role, active, created_at, updated_at FROM users WHERE id=?1"
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(User {
+                id: row.get(0)?, username: row.get(1)?, email: row.get(2)?,
+                password_hash: row.get(3)?, role: row.get(4)?, active: row.get(5)?,
+                created_at: row.get(6)?, updated_at: row.get(7)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_users(&self) -> Result<Vec<UserPublic>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, username, email, role, active, created_at, updated_at FROM users ORDER BY username"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(UserPublic {
+                id: row.get(0)?, username: row.get(1)?, email: row.get(2)?,
+                role: row.get(3)?, active: row.get(4)?, created_at: row.get(5)?, updated_at: row.get(6)?,
+            })
+        })?;
+        let mut users = Vec::new();
+        for row in rows { users.push(row?); }
+        Ok(users)
+    }
+
+    pub fn create_user(&self, username: &str, email: &str, password_hash: &str, role: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO users (username, email, password_hash, role) VALUES (?1, ?2, ?3, ?4)",
+            params![username, email, password_hash, role],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_user(&self, id: i64, username: &str, email: &str, password_hash: Option<&str>, role: &str, active: bool) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = if let Some(hash) = password_hash {
+            conn.execute(
+                "UPDATE users SET username=?1, email=?2, password_hash=?3, role=?4, active=?5, updated_at=datetime('now') WHERE id=?6",
+                params![username, email, hash, role, active, id],
+            )?
+        } else {
+            conn.execute(
+                "UPDATE users SET username=?1, email=?2, role=?3, active=?4, updated_at=datetime('now') WHERE id=?5",
+                params![username, email, role, active, id],
+            )?
+        };
+        Ok(rows > 0)
+    }
+
+    pub fn delete_user(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM users WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    pub fn update_user_password(&self, user_id: i64, password_hash: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE users SET password_hash=?1, updated_at=datetime('now') WHERE id=?2",
+            params![password_hash, user_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    // =========================================================================
+    // Password Reset Tokens
+    // =========================================================================
+
+    pub fn create_reset_token(&self, user_id: i64, token: &str, expires_at: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        // Invalidate old tokens for this user
+        conn.execute("UPDATE password_reset_tokens SET used=1 WHERE user_id=?1 AND used=0", params![user_id])?;
+        conn.execute(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?1, ?2, ?3)",
+            params![user_id, token, expires_at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn validate_reset_token(&self, token: &str) -> Result<Option<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT user_id FROM password_reset_tokens WHERE token=?1 AND used=0 AND expires_at > datetime('now')"
+        )?;
+        let mut rows = stmt.query(params![token])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn consume_reset_token(&self, token: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE password_reset_tokens SET used=1 WHERE token=?1", params![token])?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Captures CRUD
+    // =========================================================================
+
+    pub fn create_capture(&self, camera_id: i64, camera_name: &str, capture_type: &str, file_path: &str, file_size: i64) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO captures (camera_id, camera_name, capture_type, file_path, file_size) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![camera_id, camera_name, capture_type, file_path, file_size],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_captures(&self, camera_id: Option<i64>, date: Option<&str>, capture_type: Option<&str>) -> Result<Vec<Capture>> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from(
+            "SELECT id, camera_id, camera_name, capture_type, file_path, file_size, created_at FROM captures WHERE 1=1"
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1;
+
+        if let Some(cid) = camera_id {
+            sql.push_str(&format!(" AND camera_id=?{}", idx));
+            param_values.push(Box::new(cid));
+            idx += 1;
+        }
+        if let Some(d) = date {
+            sql.push_str(&format!(" AND date(created_at)=?{}", idx));
+            param_values.push(Box::new(d.to_string()));
+            idx += 1;
+        }
+        if let Some(ct) = capture_type {
+            sql.push_str(&format!(" AND capture_type=?{}", idx));
+            param_values.push(Box::new(ct.to_string()));
+            let _ = idx;
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT 500");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_ref.as_slice(), |row| {
+            Ok(Capture {
+                id: row.get(0)?,
+                camera_id: row.get(1)?,
+                camera_name: row.get(2)?,
+                capture_type: row.get(3)?,
+                file_path: row.get(4)?,
+                file_size: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?;
+        let mut captures = Vec::new();
+        for row in rows { captures.push(row?); }
+        Ok(captures)
+    }
+
+    pub fn delete_capture(&self, id: i64) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let path: Option<String> = conn.query_row(
+            "SELECT file_path FROM captures WHERE id=?1", params![id], |row| row.get(0)
+        ).ok();
+        conn.execute("DELETE FROM captures WHERE id=?1", params![id])?;
+        Ok(path)
+    }
+
+    // =========================================================================
+    // Notifications CRUD
+    // =========================================================================
+
+    pub fn create_notification(&self, category: &str, title: &str, message: &str, severity: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO notifications (category, title, message, severity) VALUES (?1, ?2, ?3, ?4)",
+            params![category, title, message, severity],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_notifications(&self, limit: i64) -> Result<Vec<Notification>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, category, title, message, severity, read, created_at FROM notifications ORDER BY created_at DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(Notification {
+                id: row.get(0)?,
+                category: row.get(1)?,
+                title: row.get(2)?,
+                message: row.get(3)?,
+                severity: row.get(4)?,
+                read: row.get::<_, i64>(5)? != 0,
+                created_at: row.get(6)?,
+            })
+        })?;
+        let mut notifs = Vec::new();
+        for row in rows { notifs.push(row?); }
+        Ok(notifs)
+    }
+
+    pub fn unread_notification_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM notifications WHERE read=0", [], |row| row.get(0))
+    }
+
+    pub fn mark_notification_read(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("UPDATE notifications SET read=1 WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    pub fn mark_all_notifications_read(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE notifications SET read=1 WHERE read=0", [])?;
+        Ok(())
+    }
+
+    pub fn delete_notification(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM notifications WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    // =========================================================================
+    // Roles & Permissions CRUD
+    // =========================================================================
+
+    pub fn seed_default_roles(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))?;
+        if count > 0 { return Ok(()); }
+
+        let modules = ["cameras", "mosaics", "locations", "users", "captures", "notifications", "roles", "settings"];
+
+        // Admin role - full access
+        conn.execute("INSERT INTO roles (name, description, is_system) VALUES ('admin', 'Acceso total al sistema', 1)", [])?;
+        let admin_id = conn.last_insert_rowid();
+        for m in &modules {
+            conn.execute(
+                "INSERT INTO role_permissions (role_id, module, can_view, can_create, can_edit, can_delete) VALUES (?1, ?2, 1, 1, 1, 1)",
+                params![admin_id, m],
+            )?;
+        }
+
+        // Operator role - can view and edit most, no user/role management
+        conn.execute("INSERT INTO roles (name, description, is_system) VALUES ('operator', 'Puede gestionar cámaras y mosaicos', 1)", [])?;
+        let op_id = conn.last_insert_rowid();
+        for m in &modules {
+            let (cv, cc, ce, cd) = match *m {
+                "cameras" | "mosaics" | "locations" | "captures" => (1, 1, 1, 1),
+                "notifications" => (1, 0, 1, 0),
+                _ => (1, 0, 0, 0),
+            };
+            conn.execute(
+                "INSERT INTO role_permissions (role_id, module, can_view, can_create, can_edit, can_delete) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![op_id, m, cv, cc, ce, cd],
+            )?;
+        }
+
+        // Viewer role - read only
+        conn.execute("INSERT INTO roles (name, description, is_system) VALUES ('viewer', 'Solo lectura', 1)", [])?;
+        let viewer_id = conn.last_insert_rowid();
+        for m in &modules {
+            let cv = if *m == "users" || *m == "roles" || *m == "settings" { 0 } else { 1 };
+            conn.execute(
+                "INSERT INTO role_permissions (role_id, module, can_view, can_create, can_edit, can_delete) VALUES (?1, ?2, ?3, 0, 0, 0)",
+                params![viewer_id, m, cv],
+            )?;
+        }
+
+        info!("Seeded default roles: admin, operator, viewer");
+        Ok(())
+    }
+
+    pub fn list_roles(&self) -> Result<Vec<RoleWithPermissions>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, description, is_system, created_at FROM roles ORDER BY id")?;
+        let roles: Vec<Role> = stmt.query_map([], |row| {
+            Ok(Role {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                is_system: row.get::<_, i64>(3)? != 0,
+                created_at: row.get(4)?,
+            })
+        })?.filter_map(|r| r.ok()).collect();
+
+        let mut result = Vec::new();
+        for role in roles {
+            let mut pstmt = conn.prepare(
+                "SELECT id, role_id, module, can_view, can_create, can_edit, can_delete FROM role_permissions WHERE role_id=?1 ORDER BY module"
+            )?;
+            let perms: Vec<Permission> = pstmt.query_map(params![role.id], |row| {
+                Ok(Permission {
+                    id: row.get(0)?,
+                    role_id: row.get(1)?,
+                    module: row.get(2)?,
+                    can_view: row.get::<_, i64>(3)? != 0,
+                    can_create: row.get::<_, i64>(4)? != 0,
+                    can_edit: row.get::<_, i64>(5)? != 0,
+                    can_delete: row.get::<_, i64>(6)? != 0,
+                })
+            })?.filter_map(|r| r.ok()).collect();
+            result.push(RoleWithPermissions { role, permissions: perms });
+        }
+        Ok(result)
+    }
+
+    pub fn create_role(&self, name: &str, description: &str, permissions: &[PermissionInput]) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO roles (name, description) VALUES (?1, ?2)",
+            params![name, description],
+        )?;
+        let role_id = conn.last_insert_rowid();
+        for p in permissions {
+            conn.execute(
+                "INSERT INTO role_permissions (role_id, module, can_view, can_create, can_edit, can_delete) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![role_id, p.module, p.can_view as i64, p.can_create as i64, p.can_edit as i64, p.can_delete as i64],
+            )?;
+        }
+        Ok(role_id)
+    }
+
+    pub fn update_role(&self, id: i64, name: &str, description: &str, permissions: &[PermissionInput]) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE roles SET name=?1, description=?2 WHERE id=?3",
+            params![name, description, id],
+        )?;
+        if rows == 0 { return Ok(false); }
+        conn.execute("DELETE FROM role_permissions WHERE role_id=?1", params![id])?;
+        for p in permissions {
+            conn.execute(
+                "INSERT INTO role_permissions (role_id, module, can_view, can_create, can_edit, can_delete) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, p.module, p.can_view as i64, p.can_create as i64, p.can_edit as i64, p.can_delete as i64],
+            )?;
+        }
+        Ok(true)
+    }
+
+    pub fn delete_role(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        // Don't delete system roles
+        let is_system: bool = conn.query_row(
+            "SELECT is_system FROM roles WHERE id=?1", params![id], |row| row.get::<_, i64>(0)
+        ).map(|v| v != 0).unwrap_or(false);
+        if is_system { return Ok(false); }
+        let rows = conn.execute("DELETE FROM roles WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    // =========================================================================
+    // Settings
+    // =========================================================================
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM settings WHERE key=?1")?;
+        let mut rows = stmt.query(params![key])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value=?2",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Mosaic Shares
+    // =========================================================================
+
+    pub fn create_mosaic_share(&self, mosaic_id: i64, mosaic_name: &str, token: &str, emails: &str, expires_at: &str, schedule_start: Option<&str>, schedule_end: Option<&str>) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO mosaic_shares (mosaic_id, mosaic_name, token, emails, expires_at, schedule_start, schedule_end) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![mosaic_id, mosaic_name, token, emails, expires_at, schedule_start, schedule_end],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_mosaic_shares(&self, mosaic_id: Option<i64>) -> Result<Vec<MosaicShare>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = if mosaic_id.is_some() {
+            "SELECT id, mosaic_id, mosaic_name, token, emails, expires_at, schedule_start, schedule_end, active, created_at FROM mosaic_shares WHERE mosaic_id=?1 ORDER BY created_at DESC"
+        } else {
+            "SELECT id, mosaic_id, mosaic_name, token, emails, expires_at, schedule_start, schedule_end, active, created_at FROM mosaic_shares ORDER BY created_at DESC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = if let Some(mid) = mosaic_id {
+            vec![Box::new(mid)]
+        } else {
+            vec![]
+        };
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_ref.as_slice(), |row| {
+            Ok(MosaicShare {
+                id: row.get(0)?,
+                mosaic_id: row.get(1)?,
+                mosaic_name: row.get(2)?,
+                token: row.get(3)?,
+                emails: row.get(4)?,
+                expires_at: row.get(5)?,
+                schedule_start: row.get(6)?,
+                schedule_end: row.get(7)?,
+                active: row.get::<_, i64>(8)? != 0,
+                created_at: row.get(9)?,
+            })
+        })?;
+        let mut shares = Vec::new();
+        for row in rows { shares.push(row?); }
+        Ok(shares)
+    }
+
+    pub fn get_mosaic_share_by_token(&self, token: &str) -> Result<Option<MosaicShare>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, mosaic_id, mosaic_name, token, emails, expires_at, schedule_start, schedule_end, active, created_at FROM mosaic_shares WHERE token=?1"
+        )?;
+        let mut rows = stmt.query(params![token])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(MosaicShare {
+                id: row.get(0)?,
+                mosaic_id: row.get(1)?,
+                mosaic_name: row.get(2)?,
+                token: row.get(3)?,
+                emails: row.get(4)?,
+                expires_at: row.get(5)?,
+                schedule_start: row.get(6)?,
+                schedule_end: row.get(7)?,
+                active: row.get::<_, i64>(8)? != 0,
+                created_at: row.get(9)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn delete_mosaic_share(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM mosaic_shares WHERE id=?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    pub fn toggle_mosaic_share(&self, id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("UPDATE mosaic_shares SET active = NOT active WHERE id=?1", params![id])?;
         Ok(rows > 0)
     }
 }

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f7; }
+        .container { max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
+        .header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 40px 32px; text-align: center; }
+        .header h1 { margin: 0; color: #ffffff; font-size: 28px; font-weight: 700; }
+        .content { padding: 40px 32px; }
+        .content p { margin: 0 0 16px; font-size: 16px; }
+        .button { display: inline-block; padding: 14px 32px; background: #f5576c; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 24px 0; }
+        .info-box { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 16px; margin: 24px 0; border-radius: 8px; }
+        .info-box p { margin: 0; }
+        .footer { padding: 32px; text-align: center; color: #86868b; font-size: 14px; border-top: 1px solid #e5e5ea; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 Mosaico Compartido</h1>
+        </div>
+        <div class="content">
+            <p>Se ha compartido contigo el acceso al mosaico de cámaras:</p>
+            
+            <div class="info-box">
+                <p><strong>📹 Mosaico:</strong> {{mosaic_name}}</p>
+                <p><strong>⏱️ Válido hasta:</strong> {{expires_at}}</p>
+            </div>
+            
+            <p>Haz clic en el botón de abajo para acceder al mosaico en tiempo real:</p>
+            
+            <div style="text-align: center;">
+                <a href="{{share_link}}" class="button">Ver Mosaico</a>
+            </div>
+            
+            <p style="color: #86868b; font-size: 14px; margin-top: 24px;">
+                ⚠️ <strong>Importante:</strong> Este enlace es personal y no debe ser compartido con otras personas. El acceso está limitado por tiempo y puede tener restricciones de horario.
+            </p>
+            
+            <p style="margin-top: 24px; color: #86868b; font-size: 14px;">Si el botón no funciona, copia y pega este enlace en tu navegador:<br><code style="background: #f5f5f7; padding: 8px; display: inline-block; margin-top: 8px; border-radius: 4px; word-break: break-all;">{{share_link}}</code></p>
+        </div>
+        <div class="footer">
+            <p>CamManager · Sistema de Gestión de Cámaras</p>
+            <p>Este es un email automático, por favor no respondas.</p>
+        </div>
+    </div>
+</body>
+</html>

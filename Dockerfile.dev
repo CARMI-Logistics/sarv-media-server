@@ -1,0 +1,30 @@
+# Dockerfile para desarrollo backend con hot-reload
+FROM rust:bookworm
+
+# Instalar cargo-watch para recompilación automática
+RUN cargo install cargo-watch
+
+# Instalar ffmpeg para mosaicos
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Puerto del backend
+EXPOSE 8080
+
+# Copiar solo archivos de dependencias primero
+COPY Cargo.toml Cargo.lock ./
+
+# Crear src dummy para compilar dependencias (cache)
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build && rm -rf src
+
+# Crear directorio para archivos estáticos (evita error en dev)
+RUN mkdir -p /app/static /app/data
+
+# El código fuente real se monta como volumen
+# cargo watch detectará cambios y recompilará automáticamente

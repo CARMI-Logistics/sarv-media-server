@@ -2,8 +2,14 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import Toast from '$lib/components/Toast.svelte';
+	import { theme } from '$lib/stores/theme.svelte';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
+
+	onMount(() => {
+		theme.apply();
+	});
 </script>
 
 <svelte:head>

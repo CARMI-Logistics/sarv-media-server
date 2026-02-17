@@ -1,0 +1,100 @@
+# =============================================================================
+# Docker Compose Development - Hot Reload
+# =============================================================================
+# 
+# Servicios con volúmenes montados para desarrollo en tiempo real:
+#   - Frontend: npm run dev (Vite HMR en puerto 5173)
+#   - Backend: Compilación automática con cargo watch
+#
+# Uso:
+#   docker compose -f docker-compose.dev.yml up
+#
+# NOTA: Este archivo es solo para desarrollo local. No usar en producción.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Frontend Dev Server (Vite HMR)
+  # ---------------------------------------------------------------------------
+  frontend-dev:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: frontend-dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=https://itchy-facts-throw.loca.lt
+    command: npm run dev -- --host 0.0.0.0
+    networks:
+      - dev-network
+
+  # ---------------------------------------------------------------------------
+  # Backend Dev (Cargo Watch)
+  # ---------------------------------------------------------------------------
+  backend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: backend-dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./src:/app/src
+      - ./Cargo.toml:/app/Cargo.toml
+      - ./Cargo.lock:/app/Cargo.lock
+      - backend-data-dev:/app/data
+      - ./recordings:/recordings
+    environment:
+      - SERVER_PORT=8080
+      - JWT_EXP_MINUTES=60
+      - RUST_LOG=debug
+      - DATABASE_PATH=/app/data/cameras.db
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+      - MEDIAMTX_API_USER=admin
+      - MEDIAMTX_API_PASS=mediamtx_secret
+      - STATIC_DIR=/app/static
+      - FRONTEND_URL=http://localhost:5173
+      - EMAIL_FROM=noreply@example.com
+    command: cargo watch -x run --why
+    depends_on:
+      - mediamtx
+    networks:
+      - dev-network
+
+  # ---------------------------------------------------------------------------
+  # MediaMTX - Servidor de Streaming (igual que producción)
+  # ---------------------------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx-dev
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./recordings:/recordings
+    command: ["/mediamtx.yml"]
+    ports:
+      - "8554:8554"
+      - "8322:8322"
+      - "1935:1935"
+      - "1936:1936"
+      - "8888:8888"
+      - "8889:8889"
+      - "8189:8189/udp"
+      - "9997:9997"
+      - "9998:9998"
+      - "8000-8007:8000-8007/udp"
+      - "8890:8890/udp"
+    networks:
+      - dev-network
+
+volumes:
+  backend-data-dev:
+    driver: local
+
+networks:
+  dev-network:
+    driver: bridge

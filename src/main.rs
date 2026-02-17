@@ -10,11 +10,19 @@ mod models;
 mod camera;
 mod mosaic;
 mod location;
+mod user;
+mod capture;
+mod notification;
+mod role;
+mod mosaic_share;
+mod security;
+mod email;
+mod thumbnail;
 
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::{get, post, put},
+    routing::{get, post, put, delete},
     Json, Router,
     middleware::{self, Next},
     response::Response,
@@ -180,6 +188,8 @@ pub struct AppState {
     pub mediamtx_api_pass: String,
     /// HTTP client reutilizable (connection pooling)
     pub http_client: reqwest::Client,
+    /// Email service with templates
+    pub email_service: email::EmailService,
 }
 
 impl AppState {
@@ -209,6 +219,11 @@ impl AppState {
 
         let http_client = reqwest::Client::new();
 
+        // Initialize email service
+        let resend_api_key = env::var("RESEND_API_KEY").unwrap_or_default();
+        let from_email = env::var("EMAIL_FROM").unwrap_or_else(|_| "noreply@example.com".to_string());
+        let email_service = email::EmailService::new(resend_api_key, from_email, http_client.clone());
+
         Ok(Self {
             encoding_key,
             decoding_key,
@@ -219,6 +234,7 @@ impl AppState {
             mediamtx_api_user,
             mediamtx_api_pass,
             http_client,
+            email_service,
         })
     }
 
@@ -469,18 +485,38 @@ async fn login(
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
     info!("Intento de login para usuario: {}", payload.username);
 
-    // Validar credenciales (hardcoded para desarrollo)
-    if payload.username != "admin" || payload.password != "admin" {
-        warn!("Credenciales inválidas para usuario: {}", payload.username);
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Credenciales inválidas".to_string(),
-            }),
-        ));
+    // Look up user in the database
+    let user = match state.db.get_user_by_username(&payload.username) {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            warn!("Usuario no encontrado: {}", payload.username);
+            return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Credenciales inválidas".to_string() })));
+        }
+        Err(e) => {
+            warn!("DB error looking up user: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "Error interno".to_string() })));
+        }
+    };
+
+    if !user.active {
+        warn!("Usuario desactivado: {}", payload.username);
+        return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Cuenta desactivada".to_string() })));
     }
 
-    // Generar JWT
+    // Verify password with bcrypt
+    match bcrypt::verify(&payload.password, &user.password_hash) {
+        Ok(true) => {}
+        Ok(false) => {
+            warn!("Contraseña incorrecta para usuario: {}", payload.username);
+            return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Credenciales inválidas".to_string() })));
+        }
+        Err(e) => {
+            warn!("Bcrypt verify error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "Error interno".to_string() })));
+        }
+    }
+
+    // Generate JWT
     match state.generate_jwt(&payload.username) {
         Ok(token) => {
             info!("JWT generado exitosamente para usuario: {}", payload.username);
@@ -488,12 +524,7 @@ async fn login(
         }
         Err(e) => {
             warn!("Error generando JWT: {}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "Error generando token".to_string(),
-                }),
-            ))
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "Error generando token".to_string() })))
         }
     }
 }
@@ -666,9 +697,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Inicializar tracing
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("mediamtx_auth_backend=info".parse()?)
-                .add_directive("tower_http=info".parse()?),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
         )
         .init();
 
@@ -684,6 +714,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let database = db::Database::new(&db_path)?;
     database.seed_if_empty()?;
+
+    // Seed default admin user (password: admin)
+    let admin_hash = bcrypt::hash("admin", 10).expect("Failed to hash admin password");
+    database.seed_admin_user(&admin_hash)?;
+
+    // Seed default roles (admin, operator, viewer)
+    database.seed_default_roles()?;
+
+    // Ensure captures and thumbnails directories exist
+    std::fs::create_dir_all("/app/data/captures").ok();
+    std::fs::create_dir_all("/app/data/thumbnails").ok();
 
     // MediaMTX API URL and credentials
     let mediamtx_api_url = env::var("MEDIAMTX_API_URL")
@@ -705,8 +746,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subrouter de cámaras (protegido por JWT)
     let camera_routes = Router::new()
         .route("/", get(camera::list_cameras).post(camera::create_camera))
-        .route("/sync", post(camera::sync_all_cameras))
         .route("/:id", get(camera::get_camera).put(camera::update_camera).delete(camera::delete_camera))
+        .route("/:id/thumbnail", get(camera::get_camera_thumbnail))
+        .route("/sync", post(camera::sync_all_cameras))
         .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
 
     // Subrouter de mosaicos (protegido por JWT)
@@ -730,24 +772,80 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/location/:location_id", get(location::list_areas_by_location))
         .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
 
+    // Subrouter de usuarios (protegido por JWT)
+    let user_routes = Router::new()
+        .route("/", get(user::list_users).post(user::create_user))
+        .route("/:id", put(user::update_user).delete(user::delete_user))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Subrouter de capturas (protegido por JWT)
+    let capture_routes = Router::new()
+        .route("/", get(capture::list_captures))
+        .route("/screenshot/:camera_id", post(capture::take_screenshot))
+        .route("/thumbnail/:camera_id", get(capture::get_thumbnail))
+        .route("/thumbnails/toggle", post(capture::toggle_thumbnails))
+        .route("/thumbnails/setting", get(capture::get_thumbnail_setting))
+        .route("/:id", delete(capture::delete_capture))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Subrouter de notificaciones (protegido por JWT)
+    let notification_routes = Router::new()
+        .route("/", get(notification::list_notifications))
+        .route("/summary", get(notification::get_notification_summary))
+        .route("/read-all", post(notification::mark_all_read))
+        .route("/:id/read", post(notification::mark_read))
+        .route("/:id", delete(notification::delete_notification))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Subrouter de roles (protegido por JWT)
+    let role_routes = Router::new()
+        .route("/", get(role::list_roles).post(role::create_role))
+        .route("/:id", put(role::update_role).delete(role::delete_role))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
+    // Subrouter de mosaic shares (protegido por JWT)
+    let share_routes = Router::new()
+        .route("/", get(mosaic_share::list_shares).post(mosaic_share::create_share))
+        .route("/:id", delete(mosaic_share::delete_share))
+        .route("/:id/toggle", post(mosaic_share::toggle_share))
+        .route_layer(middleware::from_fn_with_state(state.clone(), jwt_auth));
+
     // Static files directory
     let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "/app/static".to_string());
     info!("Sirviendo archivos estáticos desde: {}", static_dir);
 
-    // Construir router con documentación OpenAPI
+    // Construir router con documentación OpenAPI y SOC2 security middleware
     let app = Router::new()
         .route("/health", get(health))
         .route("/jwks", get(get_jwks))
         .route("/auth/login", post(login))
+        .route("/auth/forgot-password", post(user::forgot_password))
+        .route("/auth/reset-password", post(user::reset_password))
+        // Public share access (no JWT required)
+        .route("/share/:token", get(mosaic_share::validate_share))
         .nest("/api/cameras", camera_routes)
         .nest("/api/mosaics", mosaic_routes)
         .nest("/api/locations", location_routes)
         .nest("/api/areas", area_routes)
+        .nest("/api/users", user_routes)
+        .nest("/api/captures", capture_routes)
+        .nest("/api/notifications", notification_routes)
+        .nest("/api/roles", role_routes)
+        .nest("/api/shares", share_routes)
+        // Serve captures and thumbnails as static files
+        .nest_service("/data", ServeDir::new("/app/data"))
         .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
         .route("/openapi.json", get(openapi_json))
-        .with_state(state)
+        .with_state(state.clone())
+        // SOC2 Security: Apply security headers middleware
+        .layer(middleware::from_fn(security::security_headers_middleware))
+        // SOC2 Security: Apply rate limiting middleware
+        .layer(middleware::from_fn(security::rate_limit_middleware))
         .layer(cors)
-        .fallback_service(ServeDir::new(&static_dir));
+        .fallback_service(
+            ServeDir::new(&static_dir)
+                .fallback(tower_http::services::ServeFile::new(format!("{}/index.html", static_dir)))
+        );
 
     // Iniciar servidor
     let addr = format!("0.0.0.0:{}", config.server_port);

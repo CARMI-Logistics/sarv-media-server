@@ -1,0 +1,17 @@
+# Dockerfile para desarrollo frontend con hot-reload
+FROM node:22-slim
+
+WORKDIR /app
+
+# Instalar dependencias globales
+RUN npm install -g npm@latest
+
+# Copiar package.json para instalar deps durante build
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Puerto de Vite dev server
+EXPOSE 5173
+
+# Comando por defecto (puede ser sobrescrito por docker-compose)
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

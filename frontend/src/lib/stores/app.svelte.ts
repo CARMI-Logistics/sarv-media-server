@@ -1,14 +1,24 @@
 import { apiGet, apiPost, apiPut, apiDelete } from '$lib/api';
 import { toast } from '$lib/stores/toast.svelte';
-import type { Camera, Location, AreaWithLocation, Mosaic, Tab } from '$lib/types';
+import type { Camera, Location, AreaWithLocation, Mosaic, Tab, UserPublic, Capture, NotificationSummary, Notification, RoleWithPermissions, MosaicShare } from '$lib/types';
 
 class AppStore {
 	cameras = $state<Camera[]>([]);
 	locations = $state<Location[]>([]);
 	areas = $state<AreaWithLocation[]>([]);
 	mosaics = $state<Mosaic[]>([]);
+	users = $state<UserPublic[]>([]);
+	captures = $state<Capture[]>([]);
+	notifications = $state<Notification[]>([]);
+	unreadCount = $state(0);
+	roles = $state<RoleWithPermissions[]>([]);
+	shares = $state<MosaicShare[]>([]);
+	thumbnailsEnabled = $state(true);
 	activeTab = $state<Tab>('cameras');
 	searchQuery = $state('');
+	cameraStatuses = $state<Record<string, 'online' | 'offline' | 'unknown' | 'disabled'>>({});
+	private statusInterval: ReturnType<typeof setInterval> | null = null;
+	private notifInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Filters
 	filterLocations = $state<string[]>([]);
@@ -93,6 +103,26 @@ class AppStore {
 			else toast.error(json.error || 'Error');
 		} catch {
 			toast.error('Error de conexión');
+		}
+	}
+
+	async loadCameraThumbnail(cameraId: number) {
+		try {
+			const json = await apiGet<{ camera_id: number; thumbnail_url: string | null }>(`/api/cameras/${cameraId}/thumbnail`);
+			if (json.success && json.data) {
+				const camera = this.cameras.find(c => c.id === cameraId);
+				if (camera) {
+					camera.thumbnail_url = json.data.thumbnail_url;
+				}
+			}
+		} catch {
+			// Silently fail for thumbnails
+		}
+	}
+
+	async loadAllThumbnails() {
+		for (const camera of this.cameras) {
+			await this.loadCameraThumbnail(camera.id);
 		}
 	}
 
@@ -249,14 +279,301 @@ class AppStore {
 		}
 	}
 
+	// ── Users ──
+	async loadUsers() {
+		try {
+			const json = await apiGet<UserPublic[]>('/api/users');
+			if (json.success) this.users = json.data;
+		} catch { /* ignore */ }
+	}
+
+	async saveUser(id: number | null, body: Record<string, unknown>): Promise<boolean> {
+		try {
+			const json = id
+				? await apiPut<UserPublic>(`/api/users/${id}`, body)
+				: await apiPost<UserPublic>('/api/users', body);
+			if (json.success) {
+				toast.success(id ? 'Usuario actualizado' : 'Usuario creado');
+				await this.loadUsers();
+				return true;
+			} else {
+				toast.error(json.error || 'Error');
+				return false;
+			}
+		} catch {
+			toast.error('Error de conexión');
+			return false;
+		}
+	}
+
+	async deleteUser(id: number) {
+		try {
+			const json = await apiDelete<string>(`/api/users/${id}`);
+			if (json.success) {
+				toast.success('Usuario eliminado');
+				await this.loadUsers();
+			} else {
+				toast.error(json.error || 'Error');
+			}
+		} catch {
+			toast.error('Error de conexión');
+		}
+	}
+
+	// ── Camera Status ──
+	async checkCameraStatuses() {
+		try {
+			const json = await apiGet<{ name: string; ready: boolean }[]>('/api/cameras/status');
+			if (json.success && json.data) {
+				const statuses: Record<string, 'online' | 'offline' | 'unknown' | 'disabled'> = {};
+				for (const cam of this.cameras) {
+					if (!cam.enabled) {
+						statuses[cam.name] = 'disabled';
+					} else {
+						const found = json.data.find((p) => p.name === cam.name);
+						statuses[cam.name] = found ? (found.ready ? 'online' : 'offline') : 'offline';
+					}
+				}
+				this.cameraStatuses = statuses;
+			}
+		} catch {
+			// Endpoint may not exist yet; mark all as unknown
+			const statuses: Record<string, 'online' | 'offline' | 'unknown' | 'disabled'> = {};
+			for (const cam of this.cameras) {
+				statuses[cam.name] = cam.enabled ? 'unknown' : 'disabled';
+			}
+			this.cameraStatuses = statuses;
+		}
+	}
+
+	startStatusPolling() {
+		if (this.statusInterval) return;
+		this.checkCameraStatuses();
+		this.statusInterval = setInterval(() => this.checkCameraStatuses(), 30000);
+	}
+
+	stopStatusPolling() {
+		if (this.statusInterval) {
+			clearInterval(this.statusInterval);
+			this.statusInterval = null;
+		}
+	}
+
+	// ── Captures ──
+	async loadCaptures(cameraId?: number, date?: string) {
+		try {
+			let url = '/api/captures?';
+			if (cameraId) url += `camera_id=${cameraId}&`;
+			if (date) url += `date=${date}&`;
+			const json = await apiGet<Capture[]>(url);
+			if (json.success && json.data) this.captures = json.data;
+		} catch { /* ignore */ }
+	}
+
+	async takeScreenshot(cameraId: number) {
+		try {
+			toast.info('Capturando screenshot...');
+			const json = await apiPost<Capture>(`/api/captures/screenshot/${cameraId}`);
+			if (json.success) {
+				toast.success('Screenshot capturado');
+				await this.loadCaptures();
+				return true;
+			}
+			toast.error(json.error || 'Error capturando');
+			return false;
+		} catch {
+			toast.error('Error de conexión');
+			return false;
+		}
+	}
+
+	async deleteCapture(id: number) {
+		try {
+			const json = await apiDelete<string>(`/api/captures/${id}`);
+			if (json.success) {
+				toast.success('Captura eliminada');
+				await this.loadCaptures();
+			} else {
+				toast.error(json.error || 'Error');
+			}
+		} catch {
+			toast.error('Error de conexión');
+		}
+	}
+
+	async loadThumbnailSetting() {
+		try {
+			const json = await apiGet<boolean>('/api/captures/thumbnails/setting');
+			if (json.success) this.thumbnailsEnabled = json.data;
+		} catch { /* ignore */ }
+	}
+
+	async toggleThumbnails() {
+		try {
+			const json = await apiPost<boolean>('/api/captures/thumbnails/toggle');
+			if (json.success) {
+				this.thumbnailsEnabled = json.data;
+				toast.success(json.data ? 'Miniaturas activadas' : 'Miniaturas desactivadas');
+			}
+		} catch {
+			toast.error('Error de conexión');
+		}
+	}
+
+	// ── Notifications ──
+	async loadNotifications() {
+		try {
+			const json = await apiGet<NotificationSummary>('/api/notifications/summary');
+			if (json.success && json.data) {
+				this.notifications = json.data.notifications;
+				this.unreadCount = json.data.unread_count;
+			}
+		} catch { /* ignore */ }
+	}
+
+	async markNotificationRead(id: number) {
+		try {
+			await apiPost<string>(`/api/notifications/${id}/read`);
+			await this.loadNotifications();
+		} catch { /* ignore */ }
+	}
+
+	async markAllNotificationsRead() {
+		try {
+			await apiPost<string>('/api/notifications/read-all');
+			this.unreadCount = 0;
+			this.notifications = this.notifications.map((n) => ({ ...n, read: true }));
+		} catch { /* ignore */ }
+	}
+
+	async deleteNotification(id: number) {
+		try {
+			await apiDelete<string>(`/api/notifications/${id}`);
+			await this.loadNotifications();
+		} catch { /* ignore */ }
+	}
+
+	startNotificationPolling() {
+		if (this.notifInterval) return;
+		this.loadNotifications();
+		this.notifInterval = setInterval(() => this.loadNotifications(), 30000);
+	}
+
+	stopNotificationPolling() {
+		if (this.notifInterval) {
+			clearInterval(this.notifInterval);
+			this.notifInterval = null;
+		}
+	}
+
+	// ── Roles ──
+	async loadRoles() {
+		try {
+			const json = await apiGet<RoleWithPermissions[]>('/api/roles');
+			if (json.success && json.data) this.roles = json.data;
+		} catch { /* ignore */ }
+	}
+
+	async saveRole(id: number | null, body: Record<string, unknown>): Promise<boolean> {
+		try {
+			const json = id
+				? await apiPut<string>(`/api/roles/${id}`, body)
+				: await apiPost<string>('/api/roles', body);
+			if (json.success) {
+				toast.success(id ? 'Rol actualizado' : 'Rol creado');
+				await this.loadRoles();
+				return true;
+			} else {
+				toast.error(json.error || 'Error');
+				return false;
+			}
+		} catch {
+			toast.error('Error de conexión');
+			return false;
+		}
+	}
+
+	async deleteRole(id: number) {
+		try {
+			const json = await apiDelete<string>(`/api/roles/${id}`);
+			if (json.success) {
+				toast.success('Rol eliminado');
+				await this.loadRoles();
+			} else {
+				toast.error(json.error || 'Error');
+			}
+		} catch {
+			toast.error('Error de conexión');
+		}
+	}
+
+	// ── Shares ──
+	async loadShares(mosaicId?: number) {
+		try {
+			const url = mosaicId ? `/api/shares?mosaic_id=${mosaicId}` : '/api/shares';
+			const json = await apiGet(url);
+			if (json.success) this.shares = json.data as MosaicShare[];
+		} catch { /* silent */ }
+	}
+
+	async createShare(data: { mosaic_id: number; emails: string[]; duration_hours: number; schedule_start?: string; schedule_end?: string }): Promise<true | string> {
+		try {
+			const json = await apiPost('/api/shares', data);
+			if (json.success) {
+				toast.success('Enlace compartido creado');
+				await this.loadShares();
+				return true;
+			}
+			return json.error || 'Error';
+		} catch {
+			return 'Error de conexión';
+		}
+	}
+
+	async deleteShare(id: number) {
+		try {
+			const json = await apiDelete(`/api/shares/${id}`);
+			if (json.success) {
+				this.shares = this.shares.filter((s) => s.id !== id);
+				toast.success('Enlace eliminado');
+			} else {
+				toast.error(json.error || 'Error');
+			}
+		} catch {
+			toast.error('Error de conexión');
+		}
+	}
+
+	async toggleShare(id: number) {
+		try {
+			const json = await apiPost(`/api/shares/${id}/toggle`, {});
+			if (json.success) {
+				await this.loadShares();
+				toast.success('Estado actualizado');
+			}
+		} catch {
+			toast.error('Error de conexión');
+		}
+	}
+
 	// ── Init ──
 	async loadAll() {
 		await Promise.all([
 			this.loadLocations(),
 			this.loadAreas(),
 			this.loadCameras(),
-			this.loadMosaics()
+			this.loadMosaics(),
+			this.loadUsers(),
+			this.loadRoles(),
+			this.loadThumbnailSetting()
 		]);
+		this.startStatusPolling();
+		this.startNotificationPolling();
+	}
+
+	stopAll() {
+		this.stopStatusPolling();
+		this.stopNotificationPolling();
 	}
 }
 

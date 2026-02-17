@@ -5,9 +5,16 @@ use axum::{
 };
 use std::sync::Arc;
 use tracing::{info, warn};
+use serde::Serialize;
 
 use crate::models::{ApiResponse, Camera, CameraQuery};
 use crate::AppState;
+
+#[derive(Serialize)]
+pub struct ThumbnailResponse {
+    pub camera_id: i64,
+    pub thumbnail_url: Option<String>,
+}
 
 pub async fn list_cameras(
     State(state): State<Arc<AppState>>,
@@ -43,8 +50,14 @@ pub async fn create_camera(
     match state.db.create_camera(&cam) {
         Ok(id) => {
             info!("Cámara creada: {} (id={})", cam.name, id);
+            
             // Sync to MediaMTX
             let _ = sync_camera_to_mediamtx(&state, &cam).await;
+            
+            // Start thumbnail capture background task
+            let stream_name = format!("camera-{}", cam.name);
+            crate::thumbnail::start_thumbnail_capture(id, &stream_name, "/app/data/thumbnails").await;
+            
             match state.db.get_camera(id) {
                 Ok(Some(created)) => Ok((StatusCode::CREATED, Json(ApiResponse::ok(created)))),
                 _ => Ok((StatusCode::CREATED, Json(ApiResponse::ok(cam)))),
@@ -133,6 +146,50 @@ pub async fn sync_all_cameras(
 }
 
 // =========================================================================
+// Camera status (queries MediaMTX paths API)
+// =========================================================================
+
+#[derive(serde::Serialize)]
+pub struct CameraStatus {
+    pub name: String,
+    pub ready: bool,
+}
+
+pub async fn camera_statuses(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ApiResponse<Vec<CameraStatus>>>, (StatusCode, Json<ApiResponse<Vec<CameraStatus>>>)> {
+    let url = format!("{}/v3/paths/list", state.mediamtx_api_url);
+    let client = &state.http_client;
+    match client.get(&url)
+        .basic_auth(&state.mediamtx_api_user, Some(&state.mediamtx_api_pass))
+        .send().await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let items = body.get("items").and_then(|v| v.as_array());
+            let statuses: Vec<CameraStatus> = match items {
+                Some(arr) => arr.iter().filter_map(|item| {
+                    let name = item.get("name")?.as_str()?.to_string();
+                    let ready = item.get("ready").and_then(|v| v.as_bool()).unwrap_or(false);
+                    Some(CameraStatus { name, ready })
+                }).collect(),
+                None => vec![],
+            };
+            Ok(Json(ApiResponse::ok(statuses)))
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            warn!("MediaMTX paths API returned {}", status);
+            Err((StatusCode::BAD_GATEWAY, Json(ApiResponse::err(&format!("MediaMTX API error: {}", status)))))
+        }
+        Err(e) => {
+            warn!("Cannot reach MediaMTX paths API: {}", e);
+            Err((StatusCode::BAD_GATEWAY, Json(ApiResponse::err("No se pudo conectar a MediaMTX"))))
+        }
+    }
+}
+
+// =========================================================================
 // MediaMTX API integration
 // =========================================================================
 
@@ -182,6 +239,19 @@ async fn sync_camera_to_mediamtx(state: &AppState, cam: &Camera) -> Result<(), S
             Err(e.to_string())
         }
     }
+}
+
+/// Get latest thumbnail for a camera
+pub async fn get_camera_thumbnail(
+    State(_state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Json<ApiResponse<ThumbnailResponse>> {
+    let thumbnail_url = crate::thumbnail::get_latest_thumbnail(id, "/app/data/thumbnails").await;
+    
+    Json(ApiResponse::ok(ThumbnailResponse {
+        camera_id: id,
+        thumbnail_url,
+    }))
 }
 
 async fn remove_camera_from_mediamtx(state: &AppState, name: &str) -> Result<(), String> {

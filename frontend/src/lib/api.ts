@@ -1,7 +1,12 @@
 import { auth } from '$lib/stores/auth.svelte';
 import type { ApiResponse } from '$lib/types';
 
-const API = '';
+// Prioridad: 1) VITE_API_URL (para túneles ngrok/localtunnel)
+//             2) DEV mode -> localhost:8080
+//             3) Producción -> mismo origen
+const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8080' : '');
+
+console.log('[API] Using backend URL:', API || '(same origin)');
 
 export async function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
 	const token = auth.token;

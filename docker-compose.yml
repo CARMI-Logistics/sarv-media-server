@@ -29,8 +29,12 @@ services:
       - MEDIAMTX_API_URL=http://mediamtx:9997
       - MEDIAMTX_API_USER=admin
       - MEDIAMTX_API_PASS=mediamtx_secret
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - EMAIL_FROM=${EMAIL_FROM:-noreply@example.com}
     volumes:
       - backend-data:/app/data
+      - ./recordings:/recordings
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

@@ -1,75 +1,268 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Light theme (default) ── */
+:root {
+	--th-surface: #ffffff;
+	--th-surface-alt: #f8fafc;
+	--th-surface-raised: #f1f5f9;
+	--th-surface-hover: #e2e8f0;
+	--th-surface-inset: #e8edf3;
+	--th-surface-overlay: rgba(0, 0, 0, 0.4);
+	--th-content: #0f172a;
+	--th-content-secondary: #475569;
+	--th-content-muted: #94a3b8;
+	--th-edge: #e2e8f0;
+	--th-edge-secondary: #cbd5e1;
+	--th-input: #f1f5f9;
+	--th-shadow: rgba(0, 0, 0, 0.08);
+	--th-badge-success-bg: rgba(34, 197, 94, 0.12);
+	--th-badge-success-text: #15803d;
+	--th-badge-danger-bg: rgba(239, 68, 68, 0.12);
+	--th-badge-danger-text: #b91c1c;
+	--th-badge-info-bg: rgba(59, 130, 246, 0.12);
+	--th-badge-info-text: #1d4ed8;
+	--th-badge-warn-bg: rgba(245, 158, 11, 0.12);
+	--th-badge-warn-text: #b45309;
+	--th-badge-neutral-bg: #e2e8f0;
+	--th-badge-neutral-text: #475569;
+}
+
+/* ── Dark theme ── */
+:root.dark {
+	--th-surface: #0a0f1a;
+	--th-surface-alt: #111827;
+	--th-surface-raised: #1e293b;
+	--th-surface-hover: #334155;
+	--th-surface-inset: #0c1322;
+	--th-surface-overlay: rgba(0, 0, 0, 0.75);
+	--th-content: #f1f5f9;
+	--th-content-secondary: #94a3b8;
+	--th-content-muted: #64748b;
+	--th-edge: #1e293b;
+	--th-edge-secondary: #334155;
+	--th-input: #1e293b;
+	--th-shadow: rgba(0, 0, 0, 0.35);
+	--th-badge-success-bg: rgba(34, 197, 94, 0.18);
+	--th-badge-success-text: #4ade80;
+	--th-badge-danger-bg: rgba(239, 68, 68, 0.18);
+	--th-badge-danger-text: #f87171;
+	--th-badge-info-bg: rgba(59, 130, 246, 0.18);
+	--th-badge-info-text: #60a5fa;
+	--th-badge-warn-bg: rgba(245, 158, 11, 0.18);
+	--th-badge-warn-text: #fbbf24;
+	--th-badge-neutral-bg: #1e293b;
+	--th-badge-neutral-text: #94a3b8;
+}
+
+/* ── Tailwind theme tokens ── */
 @theme {
 	--font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-	--color-background: #030712;
-	--color-foreground: #f3f4f6;
-	--color-card: #111827;
-	--color-card-foreground: #f3f4f6;
-	--color-border: #1f2937;
-	--color-input: #1f2937;
-	--color-ring: #3b82f6;
+	--color-surface: var(--th-surface);
+	--color-surface-alt: var(--th-surface-alt);
+	--color-surface-raised: var(--th-surface-raised);
+	--color-surface-hover: var(--th-surface-hover);
+	--color-surface-inset: var(--th-surface-inset);
+	--color-content: var(--th-content);
+	--color-content-secondary: var(--th-content-secondary);
+	--color-content-muted: var(--th-content-muted);
+	--color-edge: var(--th-edge);
+	--color-edge-secondary: var(--th-edge-secondary);
+	--color-input-bg: var(--th-input);
 	--color-primary: #3b82f6;
+	--color-primary-hover: #2563eb;
 	--color-primary-foreground: #ffffff;
-	--color-muted: #374151;
-	--color-muted-foreground: #9ca3af;
 	--color-destructive: #ef4444;
-	--color-destructive-foreground: #ffffff;
-	--color-accent: #1f2937;
-	--color-accent-foreground: #f3f4f6;
+	--color-success: #22c55e;
+	--color-warning: #f59e0b;
 }
 
+/* ── Base ── */
 body {
 	font-family: var(--font-sans);
-	background: var(--color-background);
-	color: var(--color-foreground);
+	background: var(--th-surface);
+	color: var(--th-content);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Animations ── */
 .fade-in {
-	animation: fadeIn 0.2s ease-in;
+	animation: fadeIn 0.15s ease-out;
 }
-
 @keyframes fadeIn {
 	from { opacity: 0; transform: translateY(-4px); }
 	to { opacity: 1; transform: translateY(0); }
 }
+@keyframes pulse-rec {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.5; }
+}
 
+/* ── Status indicators ── */
 .status-dot {
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
 	display: inline-block;
+	flex-shrink: 0;
 }
 .status-dot.on {
 	background: #22c55e;
-	box-shadow: 0 0 6px #22c55e;
+	box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
 }
 .status-dot.off {
 	background: #ef4444;
+	box-shadow: 0 0 4px rgba(239, 68, 68, 0.4);
+}
+.status-dot.unknown {
+	background: #f59e0b;
+	box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
 }
 
+/* ── Modal ── */
 .modal-overlay {
-	backdrop-filter: blur(4px);
+	backdrop-filter: blur(6px);
 }
 
+/* ── Video viewer ── */
 .viewer-container {
 	position: relative;
 	overflow: hidden;
 	cursor: grab;
 	background: #000;
 	border-radius: 8px;
+	touch-action: none;
 }
 .viewer-container.dragging {
 	cursor: grabbing;
 }
 .viewer-container video {
-	transform-origin: center center;
+	transform-origin: 0 0;
 	transition: none;
 	display: block;
 	width: 100%;
+	pointer-events: none;
 }
 
-@keyframes pulse-rec {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.7; }
+/* ── Badges ── */
+.badge {
+	font-size: 10px;
+	line-height: 1;
+	padding: 3px 8px;
+	border-radius: 9999px;
+	font-weight: 500;
+	white-space: nowrap;
+}
+.badge-success { background: var(--th-badge-success-bg); color: var(--th-badge-success-text); }
+.badge-danger  { background: var(--th-badge-danger-bg);  color: var(--th-badge-danger-text); }
+.badge-info    { background: var(--th-badge-info-bg);    color: var(--th-badge-info-text); }
+.badge-warn    { background: var(--th-badge-warn-bg);    color: var(--th-badge-warn-text); }
+.badge-neutral { background: var(--th-badge-neutral-bg); color: var(--th-badge-neutral-text); }
+
+/* ── Inputs ── */
+.input {
+	width: 100%;
+	background: var(--th-input);
+	border: 1px solid var(--th-edge);
+	border-radius: 0.5rem;
+	padding: 0.5rem 0.75rem;
+	font-size: 0.875rem;
+	color: var(--th-content);
+	outline: none;
+	transition: border-color 0.15s;
+}
+.input:focus {
+	border-color: #3b82f6;
+	box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+.input-error {
+	border-color: #ef4444 !important;
+}
+.input-error:focus {
+	border-color: #ef4444 !important;
+	box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15) !important;
+}
+.input-success {
+	border-color: #22c55e !important;
+}
+.input-success:focus {
+	border-color: #22c55e !important;
+	box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15) !important;
+}
+.input::placeholder {
+	color: var(--th-content-muted);
+}
+
+/* ── Buttons ── */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.5rem 1rem;
+	border-radius: 0.5rem;
+	font-size: 0.875rem;
+	font-weight: 500;
+	transition: all 0.15s;
+	cursor: pointer;
+	border: none;
+	outline: none;
+}
+.btn-primary { background: #3b82f6; color: #fff; }
+.btn-primary:hover { background: #2563eb; }
+.btn-secondary { background: var(--th-surface-raised); color: var(--th-content); border: 1px solid var(--th-edge); }
+.btn-secondary:hover { background: var(--th-surface-hover); }
+.btn-ghost { background: transparent; color: var(--th-content-secondary); }
+.btn-ghost:hover { background: var(--th-surface-raised); color: var(--th-content); }
+.btn-danger { background: rgba(239, 68, 68, 0.12); color: var(--th-badge-danger-text); }
+.btn-danger:hover { background: rgba(239, 68, 68, 0.22); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--th-edge-secondary); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--th-content-muted); }
+
+/* ── iOS Safe Areas ── */
+.safe-top { padding-top: env(safe-area-inset-top, 0); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }
+.safe-left { padding-left: env(safe-area-inset-left, 0); }
+.safe-right { padding-right: env(safe-area-inset-right, 0); }
+
+/* Prevent iOS rubber-band on root */
+html, body { overscroll-behavior: none; }
+
+/* Fix iOS 100vh issue */
+html { height: -webkit-fill-available; }
+body { min-height: -webkit-fill-available; }
+
+/* Tap highlight removal for iOS */
+* { -webkit-tap-highlight-color: transparent; }
+
+/* Prevent iOS zoom on input focus (font-size >= 16px) */
+@media screen and (max-width: 768px) {
+	.input, select, textarea, input {
+		font-size: 16px !important;
+	}
+}
+
+/* iOS standalone (PWA) mode adjustments */
+@media (display-mode: standalone) {
+	/* Extra bottom padding for home indicator */
+	.safe-bottom {
+		padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+	}
+}
+
+/* Smooth momentum scrolling for iOS */
+.overflow-y-auto, .overflow-x-auto {
+	-webkit-overflow-scrolling: touch;
+}
+
+/* Prevent text selection on interactive elements */
+.btn, .badge, [role="listitem"] {
+	-webkit-user-select: none;
+	user-select: none;
 }
