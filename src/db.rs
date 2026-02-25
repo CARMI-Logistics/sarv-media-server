@@ -697,7 +697,7 @@ impl Database {
             "INSERT INTO users (username, email, password_hash, role, active) VALUES (?1, ?2, ?3, ?4, 1)",
             params!["admin", "admin@example.com", password_hash, "admin"],
         )?;
-        info!("Seeded default admin user (admin / admin)");
+        info!("Seeded default admin user from environment variable");
         Ok(())
     }
 

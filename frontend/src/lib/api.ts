@@ -15,6 +15,7 @@ export async function authFetch(url: string, opts: RequestInit = {}): Promise<Re
 		throw new Error('No token');
 	}
 	opts.headers = { ...opts.headers as Record<string, string>, Authorization: `Bearer ${token}` };
+	opts.credentials = 'include'; // Include httpOnly cookies in all API requests
 	const res = await fetch(url, opts);
 	if (res.status === 401) {
 		auth.logout();

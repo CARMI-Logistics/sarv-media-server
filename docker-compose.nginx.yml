@@ -1,0 +1,48 @@
+# =============================================================================
+# Docker Compose - Nginx Reverse Proxy with HTTPS/TLS
+# =============================================================================
+# Usage: docker compose -f docker-compose.yml -f docker-compose.nginx.yml up -d
+
+services:
+  # ---------------------------------------------------------------------------
+  # Nginx Reverse Proxy with TLS
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/ssl:ro
+      - certbot-webroot:/var/www/certbot:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      - mediamtx-backend
+    restart: unless-stopped
+    networks:
+      - mediamtx-network
+
+  # ---------------------------------------------------------------------------
+  # Certbot for Let's Encrypt SSL certificates
+  # ---------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    volumes:
+      - ./certs:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;"
+    networks:
+      - mediamtx-network
+
+volumes:
+  certbot-webroot:
+    driver: local
+  nginx-logs:
+    driver: local
+
+networks:
+  mediamtx-network:
+    external: true

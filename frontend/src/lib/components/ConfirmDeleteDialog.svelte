@@ -52,7 +52,6 @@
 			bind:value={inputValue}
 			class="input py-2.5 {isMatch ? 'input-success' : inputValue.length > 0 ? 'input-error' : ''}"
 			placeholder="Escribe la palabra de confirmación"
-			autofocus
 		/>
 		<div class="flex justify-end gap-3">
 			<button type="button" onclick={() => (open = false)} class="btn btn-secondary">Cancelar</button>

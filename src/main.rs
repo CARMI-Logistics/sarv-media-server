@@ -21,16 +21,16 @@ mod thumbnail;
 mod sync;
 
 use axum::{
+    body::Body,
     extract::State,
-    http::StatusCode,
+    http::{StatusCode, HeaderMap, header::{AUTHORIZATION, CONTENT_TYPE, SET_COOKIE, COOKIE, HeaderName}, HeaderValue, Request},
     routing::{get, post, put, delete},
     Json, Router,
     middleware::{self, Next},
     response::Response,
 };
-use axum::http::Request;
 use tower_http::services::ServeDir;
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::CorsLayer;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use jsonwebtoken::{encode, decode, Algorithm, EncodingKey, DecodingKey, Header, Validation};
 use rand::rngs::OsRng;
@@ -180,7 +180,7 @@ pub struct AppState {
     /// Configuración
     config: Config,
     /// Base de datos SQLite
-    pub db: db::Database,
+    pub db: Arc<db::Database>,
     /// URL de la API de MediaMTX
     pub mediamtx_api_url: String,
     /// Usuario para la API de MediaMTX (Basic Auth)
@@ -195,13 +195,32 @@ pub struct AppState {
 
 impl AppState {
     /// Crea un nuevo AppState generando un par de claves RSA
-    fn new(config: Config, db: db::Database, mediamtx_api_url: String, mediamtx_api_user: String, mediamtx_api_pass: String) -> Result<Self, Box<dyn std::error::Error>> {
-        info!("Generando par de claves RSA 2048 bits...");
-
-        // Generar par de claves RSA 2048 bits
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048)?;
-        let public_key = RsaPublicKey::from(&private_key);
+    fn new(
+        config: Config,
+        db: db::Database,
+        mediamtx_api_url: String,
+        mediamtx_api_user: String,
+        mediamtx_api_pass: String,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        // Load or generate RSA keys with persistence
+        let keys_dir = env::var("RSA_KEYS_DIR").unwrap_or_else(|_| "/app/data/keys".to_string());
+        std::fs::create_dir_all(&keys_dir).ok();
+        
+        let private_key_path = format!("{}/private.pem", keys_dir);
+        let public_key_path = format!("{}/public.pem", keys_dir);
+        
+        let (private_key, public_key) = if std::path::Path::new(&private_key_path).exists() {
+            info!("Loading existing RSA keys from {}", keys_dir);
+            Self::load_rsa_keys(&private_key_path, &public_key_path)?
+        } else {
+            info!("Generating new RSA keys and saving to {}", keys_dir);
+            let mut rng = OsRng;
+            let bits = 2048;
+            let private_key = RsaPrivateKey::new(&mut rng, bits)?;
+            let public_key = RsaPublicKey::from(&private_key);
+            Self::save_rsa_keys(&private_key, &public_key, &private_key_path, &public_key_path)?;
+            (private_key, public_key)
+        };
 
         // Obtener la clave privada en formato PEM para jsonwebtoken
         let private_pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)?;
@@ -230,7 +249,7 @@ impl AppState {
             decoding_key,
             jwks,
             config,
-            db,
+            db: Arc::new(db),
             mediamtx_api_url,
             mediamtx_api_user,
             mediamtx_api_pass,
@@ -261,6 +280,42 @@ impl AppState {
         };
 
         Ok(Jwks { keys: vec![jwk] })
+    }
+
+    /// Save RSA keys to PEM files
+    fn save_rsa_keys(
+        private_key: &RsaPrivateKey,
+        public_key: &RsaPublicKey,
+        private_path: &str,
+        public_path: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
+        
+        let private_pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)?;
+        std::fs::write(private_path, private_pem.as_bytes())?;
+        
+        let public_pem = public_key.to_public_key_pem(rsa::pkcs8::LineEnding::LF)?;
+        std::fs::write(public_path, public_pem.as_bytes())?;
+        
+        info!("RSA keys saved successfully");
+        Ok(())
+    }
+
+    /// Load RSA keys from PEM files
+    fn load_rsa_keys(
+        private_path: &str,
+        public_path: &str,
+    ) -> Result<(RsaPrivateKey, RsaPublicKey), Box<dyn std::error::Error>> {
+        use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+        
+        let private_pem = std::fs::read_to_string(private_path)?;
+        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_pem)?;
+        
+        let public_pem = std::fs::read_to_string(public_path)?;
+        let public_key = RsaPublicKey::from_public_key_pem(&public_pem)?;
+        
+        info!("RSA keys loaded successfully");
+        Ok((private_key, public_key))
     }
 
     /// Genera un JWT firmado con RS256
@@ -301,19 +356,40 @@ impl AppState {
 
 async fn jwt_auth(
     State(state): State<Arc<AppState>>,
-    mut req: Request<axum::body::Body>,
+    headers: HeaderMap,
+    mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
-    let auth_header = req.headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok());
+    // Try to get token from Authorization header first
+    let auth_header = headers
+        .get(AUTHORIZATION)
+        .and_then(|header| header.to_str().ok());
 
-    let token = match auth_header {
-        Some(h) if h.starts_with("Bearer ") => &h[7..],
-        _ => {
+    let token = if let Some(h) = auth_header {
+        if h.starts_with("Bearer ") {
+            Some(&h[7..])
+        } else {
+            None
+        }
+    } else {
+        // Fallback to cookie if no Authorization header
+        headers
+            .get(COOKIE)
+            .and_then(|cookie| cookie.to_str().ok())
+            .and_then(|cookies| {
+                cookies
+                    .split(';')
+                    .find(|c| c.trim().starts_with("jwt="))
+                    .map(|c| c.trim().trim_start_matches("jwt="))
+            })
+    };
+
+    let token = match token {
+        Some(t) => t,
+        None => {
             return Err((
                 StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse { error: "Token requerido. Usa Authorization: Bearer <token>".to_string() }),
+                Json(ErrorResponse { error: "Token requerido. Usa Authorization: Bearer <token> o cookie jwt".to_string() }),
             ));
         }
     };
@@ -487,7 +563,7 @@ async fn get_jwks(State(state): State<Arc<AppState>>) -> Json<Jwks> {
 async fn login(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(HeaderMap, Json<LoginResponse>), (StatusCode, Json<ErrorResponse>)> {
     info!("Intento de login para usuario: {}", payload.username);
 
     // Look up user in the database
@@ -525,7 +601,21 @@ async fn login(
     match state.generate_jwt(&payload.username) {
         Ok(token) => {
             info!("JWT generado exitosamente para usuario: {}", payload.username);
-            Ok(Json(LoginResponse { token }))
+            
+            // Set httpOnly cookie for JWT (secure XSS protection)
+            let mut headers = HeaderMap::new();
+            let cookie_value = format!(
+                "jwt={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
+                token,
+                state.config.jwt_exp_minutes * 60
+            );
+            
+            if let Ok(header_value) = HeaderValue::from_str(&cookie_value) {
+                headers.insert(SET_COOKIE, header_value);
+            }
+            
+            // Also return token in response for backwards compatibility
+            Ok((headers, Json(LoginResponse { token })))
         }
         Err(e) => {
             warn!("Error generando JWT: {}", e);
@@ -563,6 +653,87 @@ async fn health() -> Json<HealthResponse> {
         status: "ok".to_string(),
         service: "mediamtx-auth-backend".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+/// Deep health check response with dependency status
+#[derive(Debug, Serialize, ToSchema)]
+struct DeepHealthResponse {
+    status: String,
+    service: String,
+    version: String,
+    dependencies: DependencyStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct DependencyStatus {
+    database: HealthStatus,
+    mediamtx: HealthStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct HealthStatus {
+    healthy: bool,
+    message: String,
+}
+
+/// Deep health check endpoint that verifies all dependencies
+#[utoipa::path(
+    get,
+    path = "/health/deep",
+    responses(
+        (status = 200, description = "Deep health check with dependency status", body = DeepHealthResponse)
+    )
+)]
+async fn deep_health(State(state): State<Arc<AppState>>) -> Json<DeepHealthResponse> {
+    let timeout_secs = env::var("HEALTH_CHECK_TIMEOUT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5);
+    
+    // Check database
+    let db_status = match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        tokio::task::spawn_blocking({
+            let db = state.db.clone();
+            move || db.list_users()
+        })
+    ).await {
+        Ok(Ok(Ok(_))) => HealthStatus {
+            healthy: true,
+            message: "Database connection OK".to_string(),
+        },
+        _ => HealthStatus {
+            healthy: false,
+            message: "Database connection failed or timeout".to_string(),
+        },
+    };
+    
+    // Check MediaMTX API
+    let mediamtx_status = match tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        state.http_client.get(format!("{}/v3/config/get", state.mediamtx_api_url)).send()
+    ).await {
+        Ok(Ok(response)) if response.status().is_success() => HealthStatus {
+            healthy: true,
+            message: "MediaMTX API reachable".to_string(),
+        },
+        _ => HealthStatus {
+            healthy: false,
+            message: "MediaMTX API unreachable or timeout".to_string(),
+        },
+    };
+    
+    let overall_healthy = db_status.healthy && mediamtx_status.healthy;
+    
+    Json(DeepHealthResponse {
+        status: if overall_healthy { "healthy" } else { "degraded" }.to_string(),
+        service: "mediamtx-auth-backend".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        dependencies: DependencyStatus {
+            database: db_status,
+            mediamtx: mediamtx_status,
+        },
     })
 }
 
@@ -720,8 +891,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database = db::Database::new(&db_path)?;
     database.seed_if_empty()?;
 
-    // Seed default admin user (password: admin)
-    let admin_hash = bcrypt::hash("admin", 10).expect("Failed to hash admin password");
+    // Seed default admin user from environment variable
+    let admin_password = env::var("ADMIN_INITIAL_PASSWORD")
+        .unwrap_or_else(|_| {
+            warn!("ADMIN_INITIAL_PASSWORD not set! Using fallback. CHANGE THIS IMMEDIATELY!");
+            "ChangeMe123!".to_string()
+        });
+    
+    if admin_password.len() < 8 {
+        return Err("ADMIN_INITIAL_PASSWORD must be at least 8 characters".into());
+    }
+    
+    let admin_hash = bcrypt::hash(&admin_password, 10)
+        .expect("Failed to hash admin password");
     database.seed_admin_user(&admin_hash)?;
 
     // Seed default roles (admin, operator, viewer)
@@ -742,11 +924,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Crear estado de la aplicación
     let state = Arc::new(AppState::new(config.clone(), database, mediamtx_api_url, mediamtx_api_user, mediamtx_api_pass)?);
 
-    // CORS layer
+    // CORS layer - restrictive configuration with whitelist
+    let allowed_origins_str = env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:5173".to_string());
+    
+    let allowed_origins: Vec<HeaderValue> = allowed_origins_str
+        .split(',')
+        .filter_map(|origin| {
+            let trimmed = origin.trim();
+            match trimmed.parse::<HeaderValue>() {
+                Ok(header) => {
+                    info!("CORS: allowing origin {}", trimmed);
+                    Some(header)
+                }
+                Err(e) => {
+                    warn!("CORS: invalid origin '{}': {}", trimmed, e);
+                    None
+                }
+            }
+        })
+        .collect();
+    
+    if allowed_origins.is_empty() {
+        return Err("ALLOWED_ORIGINS must contain at least one valid origin".into());
+    }
+    
+    use tower_http::cors::{AllowOrigin, AllowMethods, AllowHeaders};
+    use axum::http::Method;
+    
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_methods(AllowMethods::list([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::PATCH,
+        ]))
+        .allow_headers(AllowHeaders::list([
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            HeaderName::from_static("x-requested-with"),
+        ]))
+        .allow_credentials(true);
 
     // Subrouter de cámaras (protegido por JWT)
     let camera_routes = Router::new()
@@ -828,6 +1048,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Construir router con documentación OpenAPI y SOC2 security middleware
     let app = Router::new()
         .route("/health", get(health))
+        .route("/health/deep", get(deep_health))
         .route("/jwks", get(get_jwks))
         .route("/auth/login", post(login))
         .route("/auth/forgot-password", post(user::forgot_password))

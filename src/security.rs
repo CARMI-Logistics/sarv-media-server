@@ -51,7 +51,7 @@ impl RateLimiter {
     }
 }
 
-/// Rate limiting middleware
+/// Rate limiting middleware with per-endpoint configuration
 pub async fn rate_limit_middleware(
     request: Request,
     next: Next,
@@ -63,12 +63,43 @@ pub async fn rate_limit_middleware(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("unknown");
 
-    // Global rate limiter: 100 requests per minute
-    static RATE_LIMITER: once_cell::sync::Lazy<RateLimiter> = 
-        once_cell::sync::Lazy::new(|| RateLimiter::new(100, 60));
+    let path = request.uri().path();
+    
+    // Determine endpoint type and use appropriate rate limiter
+    let rate_limiter = if path.starts_with("/auth/") {
+        static AUTH_LIMITER: once_cell::sync::Lazy<RateLimiter> = 
+            once_cell::sync::Lazy::new(|| {
+                let limit = std::env::var("RATE_LIMIT_AUTH")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(5);
+                RateLimiter::new(limit, 60)
+            });
+        &*AUTH_LIMITER
+    } else if path.starts_with("/share/") || path.contains("/stream") {
+        static STREAM_LIMITER: once_cell::sync::Lazy<RateLimiter> = 
+            once_cell::sync::Lazy::new(|| {
+                let limit = std::env::var("RATE_LIMIT_STREAM")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(100);
+                RateLimiter::new(limit, 60)
+            });
+        &*STREAM_LIMITER
+    } else {
+        static API_LIMITER: once_cell::sync::Lazy<RateLimiter> = 
+            once_cell::sync::Lazy::new(|| {
+                let limit = std::env::var("RATE_LIMIT_API")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30);
+                RateLimiter::new(limit, 60)
+            });
+        &*API_LIMITER
+    };
 
-    if !RATE_LIMITER.check_rate_limit(ip) {
-        warn!("Rate limit exceeded for IP: {}", ip);
+    if !rate_limiter.check_rate_limit(ip) {
+        warn!("Rate limit exceeded for IP: {} on path: {}", ip, path);
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 

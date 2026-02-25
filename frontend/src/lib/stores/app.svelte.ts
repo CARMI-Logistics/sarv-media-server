@@ -213,7 +213,7 @@ class AppStore {
 	}
 
 	// ── Mosaics ──
-	async loadMosaics(retryCount = 0) {
+	async loadMosaics(retryCount = 0): Promise<void> {
 		try {
 			const json = await apiGet<Mosaic[]>('/api/mosaics');
 			if (json.success && json.data) {

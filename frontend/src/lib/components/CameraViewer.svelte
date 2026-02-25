@@ -394,7 +394,7 @@
 			<!-- Video -->
 			<div class="p-2 sm:p-4 flex-1 min-h-0 flex flex-col">
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div bind:this={wrapEl} class="viewer-container flex-1 relative"
+				<div bind:this={wrapEl} class="viewer-container flex-1 relative overflow-hidden rounded-lg bg-black"
 					style="aspect-ratio:16/9;"
 					onwheel={handleWheel}
 					onmousedown={handleMouseDown}
@@ -404,11 +404,16 @@
 					ontouchend={handleTouchEnd}
 				>
 					{#if loading}
-						<div class="absolute inset-0 flex items-center justify-center bg-black/60 z-20">
-							<div class="text-center">
-								<div class="animate-spin w-10 h-10 border-3 border-white/20 border-t-blue-400 rounded-full mx-auto mb-3"></div>
-								<p class="text-sm text-white/70">Conectando al stream...</p>
-								<p class="text-xs text-white/40 mt-1">Intentando WebRTC, fallback a HLS</p>
+						<div class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 z-20">
+							<div class="text-center space-y-3">
+								<div class="relative w-16 h-16 mx-auto">
+									<div class="absolute inset-0 animate-spin border-4 border-blue-500/30 border-t-blue-500 rounded-full"></div>
+									<div class="absolute inset-2 animate-spin border-4 border-blue-400/20 border-t-blue-400 rounded-full" style="animation-duration: 1.5s; animation-direction: reverse;"></div>
+								</div>
+								<div>
+									<p class="text-sm font-medium text-white">Conectando al stream...</p>
+									<p class="text-xs text-slate-400 mt-1">Intentando WebRTC, fallback a HLS</p>
+								</div>
 							</div>
 						</div>
 					{/if}

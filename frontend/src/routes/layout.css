@@ -142,15 +142,33 @@ body {
 
 /* ── Animations ── */
 .fade-in {
-	animation: fadeIn 0.15s ease-out;
+	animation: fadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 @keyframes fadeIn {
-	from { opacity: 0; transform: translateY(-4px); }
+	from { opacity: 0; transform: translateY(-8px); }
 	to { opacity: 1; transform: translateY(0); }
 }
 @keyframes pulse-rec {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.5; }
+}
+@keyframes slideInRight {
+	from { opacity: 0; transform: translateX(20px); }
+	to { opacity: 1; transform: translateX(0); }
+}
+@keyframes scaleIn {
+	from { opacity: 0; transform: scale(0.95); }
+	to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+	0% { background-position: -1000px 0; }
+	100% { background-position: 1000px 0; }
+}
+.slide-in-right {
+	animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.scale-in {
+	animation: scaleIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ── Status indicators ── */
@@ -258,19 +276,40 @@ body {
 	border-radius: 0.5rem;
 	font-size: 0.875rem;
 	font-weight: 500;
-	transition: all 0.15s;
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	cursor: pointer;
 	border: none;
 	outline: none;
+	position: relative;
+	overflow: hidden;
+}
+.btn::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 0;
+	height: 0;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.2);
+	transform: translate(-50%, -50%);
+	transition: width 0.6s, height 0.6s;
+}
+.btn:active::before {
+	width: 300px;
+	height: 300px;
 }
 .btn-primary { background: #3b82f6; color: #fff; }
-.btn-primary:hover { background: #2563eb; }
+.btn-primary:hover { background: #2563eb; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4); }
+.btn-primary:active { transform: translateY(0); }
 .btn-secondary { background: var(--th-surface-raised); color: var(--th-content); border: 1px solid var(--th-edge); }
-.btn-secondary:hover { background: var(--th-surface-hover); }
+.btn-secondary:hover { background: var(--th-surface-hover); transform: translateY(-1px); }
+.btn-secondary:active { transform: translateY(0); }
 .btn-ghost { background: transparent; color: var(--th-content-secondary); }
 .btn-ghost:hover { background: var(--th-surface-raised); color: var(--th-content); }
 .btn-danger { background: rgba(239, 68, 68, 0.12); color: var(--th-badge-danger-text); }
-.btn-danger:hover { background: rgba(239, 68, 68, 0.22); }
+.btn-danger:hover { background: rgba(239, 68, 68, 0.22); transform: translateY(-1px); }
+.btn-danger:active { transform: translateY(0); }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

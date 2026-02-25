@@ -7,12 +7,12 @@ export default defineConfig({
 	server: {
 		allowedHosts: ['travis-apivorous-faustina.ngrok-free.dev'],
 		proxy: {
-			'/api': 'http://localhost:8080',
-			'/auth': 'http://localhost:8080',
-			'/health': 'http://localhost:8080',
-			'/docs': 'http://localhost:8080',
-			'/openapi.json': 'http://localhost:8080',
-			'/.well-known': 'http://localhost:8080'
+			'/api': 'http://backend-dev:8080',
+			'/auth': 'http://backend-dev:8080',
+			'/health': 'http://backend-dev:8080',
+			'/docs': 'http://backend-dev:8080',
+			'/openapi.json': 'http://backend-dev:8080',
+			'/.well-known': 'http://backend-dev:8080'
 		}
 	}
 });
