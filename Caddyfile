@@ -15,6 +15,27 @@
 {$CADDY_SITE_ADDRESS:localhost} {
 	tls internal
 
+	# --- Rate limit por IP (plugin caddy-ratelimit) -> 429 al exceder ---
+	rate_limit {
+		zone perip {
+			key    {remote_host}
+			events {$RATE_LIMIT_EVENTS:120}
+			window {$RATE_LIMIT_WINDOW:1m}
+		}
+	}
+
+	# --- CORS: solo orígenes permitidos (CORS_ALLOWED_ORIGINS = regex de Origin) ---
+	# Default '^$' = ningún origen cross-site permitido (fail-safe).
+	@origin_ok header_regexp Origin {$CORS_ALLOWED_ORIGINS:^$}
+	header @origin_ok {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
+		Access-Control-Allow-Methods "GET, OPTIONS"
+		Access-Control-Allow-Headers "Authorization, Range"
+		Vary Origin
+	}
+	@preflight method OPTIONS
+	respond @preflight 204
+
 	# --- Backend de autenticación: login, JWKS y docs ---
 	@backend path /auth/* /jwks /docs* /openapi.json
 	handle @backend {

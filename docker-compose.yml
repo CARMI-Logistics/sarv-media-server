@@ -127,7 +127,7 @@ services:
   # Caddy - Frente HTTPS (termina TLS, reenvía a backend y a HLS de MediaMTX)
   # ---------------------------------------------------------------------------
   caddy:
-    image: caddy:2
+    build: ./caddy   # Caddy + plugin caddy-ratelimit (ver caddy/Dockerfile)
     container_name: caddy
     ports:
       - "80:80"
@@ -136,6 +136,12 @@ services:
       # Dev: 'localhost' con TLS interno (autofirmado).
       # LAN: tu-host (con DNS/hosts). Producción: tu-dominio (quita 'tls internal').
       - CADDY_SITE_ADDRESS=localhost
+      # Rate limit por IP.
+      - RATE_LIMIT_EVENTS=120
+      - RATE_LIMIT_WINDOW=1m
+      # Orígenes CORS permitidos (regex de Origin). Default: ninguno.
+      # Escapar $ como $$ en compose, p.ej.:
+      # - CORS_ALLOWED_ORIGINS=^https://(app\.carmi\.com)$$
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
