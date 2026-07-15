@@ -1,17 +1,23 @@
 ###############################################
 # Global settings
 logLevel: debug
-logDestinations: [stdout]
-logFile:
+logDestinations: [stdout, file]
+logFile: /shared-logs/mediamtx.log
 
-# Authentication -> Disabled for development
-# To enable JWT auth, uncomment the lines below
-# authMethod: jwt
-# authJWTJWKS: http://mediamtx-backend:8080/jwks
-# authJWTJWKSFingerprint:
-# authJWTClaimKey: mediamtx_permissions
-# authJWTExclude: []
-# authJWTInHTTPQuery: true
+# Authentication (HU 2.1): JWT validado contra el backend Rust vía JWKS.
+# Consumir video (read/playback) EXIGE un token válido; sin token -> 401.
+authMethod: jwt
+authJWTJWKS: http://mediamtx-backend:8080/jwks
+authJWTClaimKey: mediamtx_permissions
+# El token se pasa por query (?jwt=<token>) o header Authorization: Bearer <token>.
+# Acciones que NO exigen token:
+#  - api/metrics/pprof: control interno (lo usa el agente); se restringen por red en HU 3.1.
+#  - publish: los publishers internos (p.ej. mosaic) no envían token.
+authJWTExclude:
+- action: api
+- action: metrics
+- action: pprof
+- action: publish
 
 ###############################################
 # API

@@ -27,3 +27,6 @@ Cargo.lock
 
 # Config de MediaMTX con credenciales (NO subir)
 mediamtx.yml
+
+# Credenciales por proyecto (hashes) - no versionar (sí el .example)
+config/clients.json

@@ -49,5 +49,7 @@ ENV SERVER_PORT=8080
 ENV JWT_EXP_MINUTES=60
 ENV RUST_LOG=info
 
-# Ejecutar el backend
-CMD ["/app/mediamtx-auth-backend"]
+# Ejecutar el backend. ENTRYPOINT para que los args se pasen al binario:
+#   (sin args)          -> arranca el servidor
+#   hash <secreto>      -> imprime el hash Argon2 y sale
+ENTRYPOINT ["/app/mediamtx-auth-backend"]

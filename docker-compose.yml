@@ -25,6 +25,14 @@ services:
       - SERVER_PORT=8080
       - JWT_EXP_MINUTES=60
       - RUST_LOG=info
+      # Clave de firma persistente (HU 2.2): sobrevive a reinicios.
+      - JWT_PRIVATE_KEY_PATH=/keys/jwt_private_key.pem
+      # Credenciales por proyecto (HU 2.2): archivo JSON con secretos hasheados.
+      - CLIENTS_PATH=/config/clients.json
+    volumes:
+      - jwt-keys:/keys
+      # Config con credenciales por proyecto (clients.json va gitignored).
+      - ./config:/config:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -121,3 +129,4 @@ networks:
 
 volumes:
   shared-logs:
+  jwt-keys:

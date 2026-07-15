@@ -11,14 +11,16 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use rand::rngs::OsRng;
-use rsa::{pkcs8::EncodePrivateKey, RsaPrivateKey, RsaPublicKey};
+use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
 use std::{env, sync::Arc};
 use time::{Duration, OffsetDateTime};
 use tracing::{info, warn};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_scalar::{Scalar, Servable};
+
+mod clients;
+mod keys;
 
 // ============================================================================
 // Configuración
@@ -31,6 +33,10 @@ struct Config {
     server_port: u16,
     /// Minutos de expiración del JWT
     jwt_exp_minutes: i64,
+    /// Ruta del archivo de la clave privada RSA (volumen persistente)
+    jwt_private_key_path: String,
+    /// Ruta del archivo JSON con las credenciales por proyecto
+    clients_path: String,
 }
 
 impl Config {
@@ -46,9 +52,17 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(60);
 
+        let jwt_private_key_path = env::var("JWT_PRIVATE_KEY_PATH")
+            .unwrap_or_else(|_| "/keys/jwt_private_key.pem".to_string());
+
+        let clients_path = env::var("CLIENTS_PATH")
+            .unwrap_or_else(|_| "/config/clients.json".to_string());
+
         Self {
             server_port,
             jwt_exp_minutes,
+            jwt_private_key_path,
+            clients_path,
         }
     }
 }
@@ -153,6 +167,8 @@ struct AppState {
     encoding_key: EncodingKey,
     /// JWKS preconstruido en memoria
     jwks: Jwks,
+    /// Almacén de credenciales por proyecto
+    client_store: clients::ClientStore,
     /// Configuración
     config: Config,
 }
@@ -160,26 +176,20 @@ struct AppState {
 impl AppState {
     /// Crea un nuevo AppState generando un par de claves RSA
     fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
-        info!("Generando par de claves RSA 2048 bits...");
-
-        // Generar par de claves RSA 2048 bits
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048)?;
-        let public_key = RsaPublicKey::from(&private_key);
-
-        // Obtener la clave privada en formato PEM para jsonwebtoken
-        let private_pem = private_key.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)?;
-        let encoding_key = EncodingKey::from_rsa_pem(private_pem.as_bytes())?;
+        // Carga la clave de firma persistente (o la genera y guarda la 1a vez).
+        let material = keys::load_or_create(&config.jwt_private_key_path)?;
 
         // Construir JWKS desde la clave pública
-        let jwks = Self::build_jwks(&public_key)?;
-
-        info!("Par de claves RSA generado exitosamente");
+        let jwks = Self::build_jwks(&material.public_key)?;
         info!("JWKS construido con kid='key1'");
 
+        // Cargar credenciales por proyecto (fail-closed si el archivo falta).
+        let client_store = clients::ClientStore::load(&config.clients_path);
+
         Ok(Self {
-            encoding_key,
+            encoding_key: material.encoding_key,
             jwks,
+            client_store,
             config,
         })
     }
@@ -209,12 +219,12 @@ impl AppState {
     }
 
     /// Genera un JWT firmado con RS256
-    fn generate_jwt(&self, username: &str) -> Result<String, jsonwebtoken::errors::Error> {
+    fn generate_jwt(&self, client_id: &str) -> Result<String, jsonwebtoken::errors::Error> {
         let now = OffsetDateTime::now_utc();
         let exp = now + Duration::minutes(self.config.jwt_exp_minutes);
 
         let claims = Claims {
-            sub: username.to_string(),
+            sub: client_id.to_string(),
             exp: exp.unix_timestamp(),
             mediamtx_permissions: vec![
                 MtxPermission {
@@ -249,13 +259,13 @@ impl AppState {
 /// Submit user credentials to obtain a JWT token for MediaMTX access.
 #[derive(Debug, Deserialize, ToSchema)]
 struct LoginRequest {
-    /// User account identifier
-    #[schema(example = "admin", min_length = 1, max_length = 100)]
-    username: String,
-    
-    /// User password (transmitted securely over HTTPS in production)
-    #[schema(example = "admin", min_length = 1)]
-    password: String,
+    /// Project/client identifier
+    #[schema(example = "sigac", min_length = 1, max_length = 100)]
+    client_id: String,
+
+    /// Project secret (transmitted securely over HTTPS in production)
+    #[schema(example = "s3cret", min_length = 1)]
+    client_secret: String,
 }
 
 /// Successful authentication response containing the JWT.
@@ -367,8 +377,8 @@ async fn get_jwks(State(state): State<Arc<AppState>>) -> Json<Jwks> {
     path = "/auth/login",
     tag = "Authentication",
     operation_id = "login",
-    request_body(content = LoginRequest, description = "User credentials", 
-        example = json!({"username": "admin", "password": "admin"})
+    request_body(content = LoginRequest, description = "Project credentials",
+        example = json!({"client_id": "sigac", "client_secret": "s3cret"})
     ),
     responses(
         (status = 200, description = "Authentication successful. Returns signed JWT.", body = LoginResponse,
@@ -386,11 +396,14 @@ async fn login(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
-    info!("Intento de login para usuario: {}", payload.username);
+    info!("Intento de login para proyecto: {}", payload.client_id);
 
-    // Validar credenciales (hardcoded para desarrollo)
-    if payload.username != "admin" || payload.password != "admin" {
-        warn!("Credenciales inválidas para usuario: {}", payload.username);
+    // Validar credenciales contra el almacén por proyecto (fail-closed).
+    if !state
+        .client_store
+        .verify(&payload.client_id, &payload.client_secret)
+    {
+        warn!("Credenciales inválidas para proyecto: {}", payload.client_id);
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
@@ -400,9 +413,9 @@ async fn login(
     }
 
     // Generar JWT
-    match state.generate_jwt(&payload.username) {
+    match state.generate_jwt(&payload.client_id) {
         Ok(token) => {
-            info!("JWT generado exitosamente para usuario: {}", payload.username);
+            info!("JWT generado exitosamente para proyecto: {}", payload.client_id);
             Ok(Json(LoginResponse { token }))
         }
         Err(e) => {
@@ -496,7 +509,7 @@ This API provides JWT-based authentication for [MediaMTX](https://github.com/blu
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "admin"}'
+  -d '{"client_id": "sigac", "client_secret": "s3cret"}'
 ```
 
 ### 2. Access Streams
@@ -530,8 +543,11 @@ The JWT contains the following claims:
 ## Security Considerations
 
 - Tokens are signed with RS256 (2048-bit RSA keys)
-- Keys are generated at startup (ephemeral)
-- Default token expiration: 60 minutes
+- Keys are persisted across restarts (mounted volume)
+- Per-project credentials, secrets stored hashed (Argon2id); no shared user
+- Default token expiration: 60 minutes (configurable via JWT_EXP_MINUTES)
+- Token renewal: clients re-authenticate via `POST /auth/login` before expiry
+  to obtain a fresh token (no refresh tokens; stateless machine-to-machine)
 - Use HTTPS in production environments
 "#,
         contact(
@@ -579,6 +595,17 @@ struct ApiDoc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Subcomando: generar el hash Argon2 de un secreto (alta de proyectos).
+    //   mediamtx-auth-backend hash <secreto>
+    let args: Vec<String> = env::args().collect();
+    if args.get(1).map(String::as_str) == Some("hash") {
+        let secret = args
+            .get(2)
+            .ok_or("uso: mediamtx-auth-backend hash <secreto>")?;
+        println!("{}", clients::hash_secret(secret)?);
+        return Ok(());
+    }
+
     // Cargar variables de entorno desde .env
     dotenvy::dotenv().ok();
 

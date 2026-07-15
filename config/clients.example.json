@@ -1,0 +1,8 @@
+{
+  "clients": [
+    {
+      "client_id": "ejemplo-proyecto",
+      "secret_hash": "GENERAR_CON:  docker compose run --rm mediamtx-backend hash <secreto>"
+    }
+  ]
+}
