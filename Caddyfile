@@ -1,0 +1,28 @@
+# =============================================================================
+# Caddy — frente HTTPS del media server (HU 2.1)
+# =============================================================================
+# Termina TLS y reenvía en HTTP interno al backend (login/JWKS) y a MediaMTX (HLS).
+#
+# Dev:        CADDY_SITE_ADDRESS=localhost (default) + 'tls internal' (CA interna,
+#            autofirmado). Acceso por https://localhost, curl -k.
+# LAN:        CADDY_SITE_ADDRESS=tu-host (p.ej. media.local, con DNS/hosts). Caddy
+#            emite un cert interno para ese nombre (el acceso debe usar ese nombre,
+#            no la IP, para que haya SNI).
+# Producción: CADDY_SITE_ADDRESS=tu-dominio.com y QUITA 'tls internal' para que
+#            Caddy emita certificados válidos con Let's Encrypt.
+# =============================================================================
+
+{$CADDY_SITE_ADDRESS:localhost} {
+	tls internal
+
+	# --- Backend de autenticación: login, JWKS y docs ---
+	@backend path /auth/* /jwks /docs* /openapi.json
+	handle @backend {
+		reverse_proxy mediamtx-backend:8080
+	}
+
+	# --- Todo lo demás: HLS de MediaMTX (lo que consume el frontend) ---
+	handle {
+		reverse_proxy mediamtx:8888
+	}
+}

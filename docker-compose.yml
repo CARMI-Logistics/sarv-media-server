@@ -123,6 +123,30 @@ services:
     networks:
       - mediamtx-network
 
+  # ---------------------------------------------------------------------------
+  # Caddy - Frente HTTPS (termina TLS, reenvía a backend y a HLS de MediaMTX)
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Dev: 'localhost' con TLS interno (autofirmado).
+      # LAN: tu-host (con DNS/hosts). Producción: tu-dominio (quita 'tls internal').
+      - CADDY_SITE_ADDRESS=localhost
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - mediamtx-backend
+      - mediamtx
+    restart: unless-stopped
+    networks:
+      - mediamtx-network
+
 networks:
   mediamtx-network:
     driver: bridge
@@ -130,3 +154,5 @@ networks:
 volumes:
   shared-logs:
   jwt-keys:
+  caddy-data:
+  caddy-config:
