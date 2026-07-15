@@ -39,11 +39,13 @@ services:
   # MediaMTX - Servidor de Streaming
   # ---------------------------------------------------------------------------
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1.19.2
     container_name: mediamtx
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
       - ./recordings:/recordings
+      # Log compartido para que el agente lo lea (solo lectura del lado del agente)
+      - shared-logs:/shared-logs
     command: ["/mediamtx.yml"]
     ports:
       # RTSP
@@ -83,6 +85,39 @@ services:
     networks:
       - mediamtx-network
 
+  # ---------------------------------------------------------------------------
+  # stream-agent - Agente de diagnóstico de cámaras (Fase 1, solo lectura)
+  # ---------------------------------------------------------------------------
+  stream-agent:
+    build: ./agent
+    container_name: stream-agent
+    ports:
+      # Solo loopback: no accesible desde internet (HU 1.3)
+      - "127.0.0.1:8090:8090"
+    # Secretos (GEMINI_API_KEY, SLACK_WEBHOOK_URL) desde agent/.env.
+    # Opcional: si el archivo no existe, no falla (required: false).
+    env_file:
+      - path: ./agent/.env
+        required: false
+    environment:
+      - PORT=8090
+      - LOG_LEVEL=info
+      # URLs internas del compose (config no sensible).
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+      - MEDIAMTX_HLS_URL=http://mediamtx:8888
+      - MEDIAMTX_LOG_PATH=/shared-logs/mediamtx.log
+    volumes:
+      # Lee el log de MediaMTX en solo lectura (HU 1.3: el agente solo observa)
+      - shared-logs:/shared-logs:ro
+    depends_on:
+      - mediamtx
+    restart: unless-stopped
+    networks:
+      - mediamtx-network
+
 networks:
   mediamtx-network:
     driver: bridge
+
+volumes:
+  shared-logs:
