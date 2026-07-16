@@ -9,7 +9,10 @@ logFile: /shared-logs/mediamtx.log
 authMethod: jwt
 authJWTJWKS: http://mediamtx-backend:8080/jwks
 authJWTClaimKey: mediamtx_permissions
-# El token se pasa por query (?jwt=<token>) o header Authorization: Bearer <token>.
+# Permite el token por query (?jwt=<token>), necesario para HLS en navegador/hls.js
+# (además del header Authorization: Bearer). 1.19.2 lo marca "deprecated" pero
+# sigue siendo requerido para leer el token del query string.
+authJWTInHTTPQuery: true
 # Acciones que NO exigen token:
 #  - api/metrics/pprof: control interno (lo usa el agente); se restringen por red en HU 3.1.
 #  - publish: los publishers internos (p.ej. mosaic) no envían token.
