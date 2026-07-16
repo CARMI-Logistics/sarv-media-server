@@ -97,8 +97,8 @@ struct MtxPermission {
 /// is specifically required by MediaMTX for permission validation.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 struct Claims {
-    /// Subject identifier (typically the username or user ID)
-    #[schema(example = "admin")]
+    /// Subject identifier (the project / client id)
+    #[schema(example = "sigac")]
     sub: String,
     
     /// Token expiration time as Unix timestamp (seconds since epoch)
@@ -360,7 +360,7 @@ async fn get_jwks(State(state): State<Arc<AppState>>) -> Json<Jwks> {
 ///
 /// ## Token Contents
 /// The generated JWT includes:
-/// - `sub`: Username/subject identifier
+/// - `sub`: Subject identifier (project / client id)
 /// - `exp`: Expiration timestamp
 /// - `mediamtx_permissions`: Array of granted permissions
 ///
@@ -384,7 +384,7 @@ async fn get_jwks(State(state): State<Arc<AppState>>) -> Json<Jwks> {
         (status = 200, description = "Authentication successful. Returns signed JWT.", body = LoginResponse,
             example = json!({"token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6ImtleTEifQ..."})
         ),
-        (status = 401, description = "Authentication failed. Invalid username or password.", body = ErrorResponse,
+        (status = 401, description = "Authentication failed. Invalid client_id or client_secret.", body = ErrorResponse,
             example = json!({"error": "Invalid credentials"})
         ),
         (status = 500, description = "Internal server error during token generation.", body = ErrorResponse,
@@ -484,7 +484,7 @@ This API provides JWT-based authentication for [MediaMTX](https://github.com/blu
 └────┬─────┘                    └──────┬───────┘                    └────┬─────┘
      │                                 │                                  │
      │  1. POST /auth/login            │                                  │
-     │  {username, password}           │                                  │
+     │  {client_id, client_secret}     │                                  │
      │────────────────────────────────>│                                  │
      │                                 │                                  │
      │  2. JWT Token (RS256)           │                                  │
@@ -528,7 +528,7 @@ The JWT contains the following claims:
 
 | Claim | Description |
 |-------|-------------|
-| `sub` | Subject (username) |
+| `sub` | Subject (client id) |
 | `exp` | Expiration timestamp |
 | `mediamtx_permissions` | Array of permission objects |
 
