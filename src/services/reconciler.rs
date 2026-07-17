@@ -88,13 +88,11 @@ impl ReconcilerService {
     }
 
     /// Sincronización puntual de una cámara (alta/edición vía endpoints, HU 4.5).
-    #[allow(dead_code)] // lo invocan los endpoints de administración en HU 4.5
     pub async fn apply_camera(&self, camera: &Camera) -> Result<(), ProvisionError> {
         self.provisioner.apply(camera).await
     }
 
     /// Baja puntual de una ruta (borrado de cámara vía endpoints, HU 4.5).
-    #[allow(dead_code)] // lo invocan los endpoints de administración en HU 4.5
     pub async fn remove_camera(&self, path: &str) -> Result<(), ProvisionError> {
         self.provisioner.remove(path).await
     }

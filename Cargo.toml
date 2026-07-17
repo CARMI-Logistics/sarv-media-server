@@ -37,7 +37,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # OpenAPI / Scalar
-utoipa = { version = "4", features = ["axum_extras"] }
+utoipa = { version = "4", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-scalar = { version = "0.1", features = ["axum"] }
 
 # Variables de entorno desde .env

@@ -37,6 +37,8 @@ services:
       # Control API de MediaMTX (HU 4.2): destino del reconciler (interno).
       - MEDIAMTX_API_URL=${MEDIAMTX_API_URL:-http://mediamtx:9997}
       - RECONCILE_INTERVAL_SECS=${RECONCILE_INTERVAL_SECS:-300}
+      # Token de administración (HU 4.5). Vacío = admin deshabilitado (fail-closed).
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-}
     volumes:
       - jwt-keys:/keys
       # Config con credenciales por proyecto (clients.json va gitignored).

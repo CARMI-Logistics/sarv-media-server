@@ -39,6 +39,9 @@ pub trait ProjectRepo: Send + Sync {
     /// Paths de las cámaras con acceso EXPLÍCITO del proyecto. Ignora la bandera
     /// `all_cameras`; eso lo resuelve el servicio de autorización (HU 4.4).
     async fn allowed_camera_paths(&self, project_id: Uuid) -> RepoResult<Vec<String>>;
+
+    /// IDs de las cámaras asignadas explícitamente al proyecto (n-a-n).
+    async fn assigned_camera_ids(&self, project_id: Uuid) -> RepoResult<Vec<Uuid>>;
 }
 
 /// Cámaras: fuente de verdad; el reconciler las lleva a MediaMTX (HU 4.2).

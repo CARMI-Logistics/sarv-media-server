@@ -111,6 +111,9 @@ mod tests {
         async fn allowed_camera_paths(&self, _: Uuid) -> RepoResult<Vec<String>> {
             Ok(self.allowed.clone())
         }
+        async fn assigned_camera_ids(&self, _: Uuid) -> RepoResult<Vec<Uuid>> {
+            unimplemented!()
+        }
     }
 
     fn project(client_id: &str, secret: &str, enabled: bool) -> Project {

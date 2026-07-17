@@ -17,7 +17,8 @@ use sqlx::PgPool;
 use std::{env, sync::Arc};
 use time::{Duration, OffsetDateTime};
 use tracing::{info, warn};
-use utoipa::{OpenApi, ToSchema};
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi, ToSchema};
 use utoipa_scalar::{Scalar, Servable};
 
 mod crypto;
@@ -25,6 +26,7 @@ mod crypto;
 // (se consumen desde HU 4.6); se permite dead_code hasta entonces.
 #[allow(dead_code)]
 mod domain;
+mod http;
 mod infra;
 mod keys;
 mod secret;
@@ -61,6 +63,8 @@ struct Config {
     mediamtx_api_url: String,
     /// Intervalo del reconcile periódico, en segundos
     reconcile_interval_secs: u64,
+    /// Token bearer para los endpoints de administración (secreto → se redacta)
+    admin_api_token: String,
 }
 
 /// `Debug` manual: NUNCA imprime la cadena de conexión ni la clave de cifrado.
@@ -75,6 +79,7 @@ impl std::fmt::Debug for Config {
             .field("db_encryption_key", &"<redactado>")
             .field("mediamtx_api_url", &self.mediamtx_api_url)
             .field("reconcile_interval_secs", &self.reconcile_interval_secs)
+            .field("admin_api_token", &"<redactado>")
             .finish()
     }
 }
@@ -111,6 +116,8 @@ impl Config {
             .and_then(|v| v.parse().ok())
             .unwrap_or(300);
 
+        let admin_api_token = env::var("ADMIN_API_TOKEN").unwrap_or_default();
+
         Self {
             server_port,
             jwt_exp_minutes,
@@ -120,6 +127,7 @@ impl Config {
             db_encryption_key,
             mediamtx_api_url,
             reconcile_interval_secs,
+            admin_api_token,
         }
     }
 }
@@ -230,9 +238,7 @@ struct AppState {
     config: Config,
     /// Repositorios (puertos) respaldados por Postgres (HU 4.1).
     /// Aún sin consumir por los handlers; se usan desde HU 4.2+.
-    #[allow(dead_code)]
     project_repo: Arc<dyn ProjectRepo>,
-    #[allow(dead_code)]
     camera_repo: Arc<dyn CameraRepo>,
     #[allow(dead_code)]
     failure_repo: Arc<dyn FailureRepo>,
@@ -693,12 +699,24 @@ The JWT contains the following claims:
     tags(
         (name = "Authentication", description = "User authentication and token generation"),
         (name = "JWT & Token Management", description = "JSON Web Key Set and token validation endpoints"),
-        (name = "System & Monitoring", description = "Health checks and service status")
+        (name = "System & Monitoring", description = "Health checks and service status"),
+        (name = "Administration", description = "CRUD de cámaras y proyectos (requiere ADMIN_API_TOKEN)")
     ),
+    modifiers(&SecurityAddon),
     paths(
         get_jwks,
         login,
-        health
+        health,
+        http::admin::list_cameras,
+        http::admin::create_camera,
+        http::admin::get_camera,
+        http::admin::update_camera,
+        http::admin::delete_camera,
+        http::admin::list_projects,
+        http::admin::create_project,
+        http::admin::get_project,
+        http::admin::update_project,
+        http::admin::delete_project
     ),
     components(
         schemas(
@@ -709,11 +727,31 @@ The JWT contains the following claims:
             Jwks,
             Jwk,
             Claims,
-            MtxPermission
+            MtxPermission,
+            http::admin::CameraResponse,
+            http::admin::CreateCameraRequest,
+            http::admin::UpdateCameraRequest,
+            http::admin::ProjectResponse,
+            http::admin::CreateProjectRequest,
+            http::admin::UpdateProjectRequest
         )
     )
 )]
 struct ApiDoc;
+
+/// Agrega el esquema de seguridad bearer (ADMIN_API_TOKEN) usado por /admin/*.
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "admin_token",
+                SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
+            );
+        }
+    }
+}
 
 // ============================================================================
 // Main
@@ -893,12 +931,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (con reintentos) y luego periódicamente para sanar deriva.
     spawn_reconciler(state.reconciler.clone(), config.reconcile_interval_secs);
 
+    // Panel de administración (HU 4.5), protegido por ADMIN_API_TOKEN.
+    let admin = http::admin::router().layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        http::admin::require_admin,
+    ));
+
     // Construir router con documentación OpenAPI
     let app = Router::new()
         // Endpoints de la API
         .route("/health", get(health))
         .route("/jwks", get(get_jwks))
         .route("/auth/login", post(login))
+        // Panel de administración
+        .nest("/admin", admin)
         // Documentación OpenAPI (Scalar UI)
         .merge(Scalar::with_url("/docs", ApiDoc::openapi()))
         // Endpoint para obtener el JSON de OpenAPI

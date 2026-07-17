@@ -161,6 +161,17 @@ impl ProjectRepo for PgProjectRepo {
         .map_err(map_sqlx_err)?;
         Ok(rows.into_iter().map(|(path,)| path).collect())
     }
+
+    async fn assigned_camera_ids(&self, project_id: Uuid) -> RepoResult<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT camera_id FROM project_cameras WHERE project_id = $1 ORDER BY camera_id",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
 }
 
 #[cfg(test)]
