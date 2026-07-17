@@ -8,3 +8,5 @@ pub mod db;
 // endpoints los consumen desde HU 4.2+, por eso se permite dead_code hasta entonces.
 #[allow(dead_code)]
 pub mod postgres;
+// Adaptador de la Control API de MediaMTX (lo consume el reconciler).
+pub mod mediamtx;

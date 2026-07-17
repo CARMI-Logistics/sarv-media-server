@@ -61,3 +61,7 @@ thiserror = "1"
 
 # Cifrado en reposo de credenciales de cámara (HU 4.1)
 aes-gcm = "0.10"
+
+# Cliente HTTP para la Control API de MediaMTX (HU 4.2). Solo http interno:
+# sin backend TLS (default-features off) para un build ligero.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }

@@ -164,17 +164,9 @@ pathDefaults:
 # Path settings
 paths:
 
-  # Entrnace cameras
-  Camera-key:
-    source: rtsp://user:password@127.0.0.1/axis-media/media.amp
-    sourceFingerprint: ""
-    record: yes
-    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
-    recordFormat: fmp4
-    recordPartDuration: 5s
-    recordSegmentDuration: 1h
-    recordDeleteAfter: 24h
-    overridePublisher: no
+  # Las cámaras (pull RTSP) NO se definen aquí: se administran en la base de
+  # datos y el backend las sincroniza con MediaMTX vía la Control API (HU 4.2).
+  # Este archivo solo conserva la configuración global y los patrones/publishers.
 
   ~^live/.*$:
       source: publisher

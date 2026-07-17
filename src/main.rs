@@ -21,19 +21,19 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_scalar::{Scalar, Servable};
 
 mod clients;
-// Cifrado en reposo: se ejercita en tests, pero ningún endpoint lo llama aún
-// (lo consumen los servicios/handlers desde HU 4.2+).
-#[allow(dead_code)]
 mod crypto;
-// Dominio y adaptadores: validados por tests, pero aún no los invoca un endpoint
-// (se consumen desde HU 4.2+); se permite dead_code hasta entonces.
+// Dominio: algunos puertos/modelos (projects, failures) aún no los invoca un
+// endpoint (se consumen desde HU 4.3/4.6); se permite dead_code hasta entonces.
 #[allow(dead_code)]
 mod domain;
 mod infra;
 mod keys;
+mod services;
 
-use domain::ports::{CameraRepo, FailureRepo, ProjectRepo};
+use domain::ports::{CameraProvisioner, CameraRepo, FailureRepo, ProjectRepo};
+use infra::mediamtx::MediaMtxProvisioner;
 use infra::postgres::{PgCameraRepo, PgFailureRepo, PgProjectRepo};
+use services::reconciler::ReconcilerService;
 
 // ============================================================================
 // Configuración
@@ -54,6 +54,10 @@ struct Config {
     database_url: String,
     /// Clave AES-256-GCM en base64 para cifrado en reposo (secreto → se redacta)
     db_encryption_key: String,
+    /// URL de la Control API de MediaMTX (interno, sin credenciales)
+    mediamtx_api_url: String,
+    /// Intervalo del reconcile periódico, en segundos
+    reconcile_interval_secs: u64,
 }
 
 /// `Debug` manual: NUNCA imprime la cadena de conexión ni la clave de cifrado.
@@ -66,6 +70,8 @@ impl std::fmt::Debug for Config {
             .field("clients_path", &self.clients_path)
             .field("database_url", &"<redactado>")
             .field("db_encryption_key", &"<redactado>")
+            .field("mediamtx_api_url", &self.mediamtx_api_url)
+            .field("reconcile_interval_secs", &self.reconcile_interval_secs)
             .finish()
     }
 }
@@ -94,6 +100,14 @@ impl Config {
 
         let db_encryption_key = env::var("DB_ENCRYPTION_KEY").unwrap_or_default();
 
+        let mediamtx_api_url =
+            env::var("MEDIAMTX_API_URL").unwrap_or_else(|_| "http://mediamtx:9997".to_string());
+
+        let reconcile_interval_secs = env::var("RECONCILE_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300);
+
         Self {
             server_port,
             jwt_exp_minutes,
@@ -101,6 +115,8 @@ impl Config {
             clients_path,
             database_url,
             db_encryption_key,
+            mediamtx_api_url,
+            reconcile_interval_secs,
         }
     }
 }
@@ -217,6 +233,9 @@ struct AppState {
     camera_repo: Arc<dyn CameraRepo>,
     #[allow(dead_code)]
     failure_repo: Arc<dyn FailureRepo>,
+    /// Reconciler BD → MediaMTX (HU 4.2). Lo usa la tarea de arranque y, en
+    /// HU 4.5, los endpoints de administración para sync puntual.
+    reconciler: Arc<ReconcilerService>,
 }
 
 impl AppState {
@@ -242,6 +261,11 @@ impl AppState {
         let camera_repo: Arc<dyn CameraRepo> = Arc::new(PgCameraRepo::new(db.clone(), cipher));
         let failure_repo: Arc<dyn FailureRepo> = Arc::new(PgFailureRepo::new(db));
 
+        // Reconciler BD → MediaMTX (HU 4.2).
+        let provisioner: Arc<dyn CameraProvisioner> =
+            Arc::new(MediaMtxProvisioner::new(&config.mediamtx_api_url));
+        let reconciler = Arc::new(ReconcilerService::new(camera_repo.clone(), provisioner));
+
         Ok(Self {
             encoding_key: material.encoding_key,
             jwks,
@@ -250,6 +274,7 @@ impl AppState {
             project_repo,
             camera_repo,
             failure_repo,
+            reconciler,
         })
     }
 
@@ -652,6 +677,81 @@ struct ApiDoc;
 // Main
 // ============================================================================
 
+/// Intentos del reconcile inicial (MediaMTX puede tardar en estar listo).
+const RECONCILE_BOOT_ATTEMPTS: u32 = 10;
+
+/// Lanza el reconciler en segundo plano: reconcile inicial con reintentos y
+/// luego periódico. No bloquea el arranque del servidor HTTP.
+fn spawn_reconciler(reconciler: Arc<ReconcilerService>, interval_secs: u64) {
+    tokio::spawn(async move {
+        for attempt in 1..=RECONCILE_BOOT_ATTEMPTS {
+            match reconciler.reconcile_all().await {
+                Ok(()) => break,
+                Err(e) => {
+                    warn!(
+                        "Reconcile inicial falló (intento {}/{}): {}",
+                        attempt, RECONCILE_BOOT_ATTEMPTS, e
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
+        let interval = std::time::Duration::from_secs(interval_secs);
+        loop {
+            tokio::time::sleep(interval).await;
+            if let Err(e) = reconciler.reconcile_all().await {
+                warn!("Reconcile periódico falló: {}", e);
+            }
+        }
+    });
+}
+
+/// Subcomando one-time: importa a la BD las cámaras configuradas en el MediaMTX
+/// vivo (source RTSP), cifrando la URL. Idempotente: omite las que ya existan.
+/// SEGURIDAD: solo registra el nombre de la ruta, nunca la URL con credenciales.
+async fn migrate_cameras(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    let pool = infra::db::connect_with_retry(&config.database_url).await?;
+    infra::db::run_migrations(&pool).await?;
+    let cipher = crypto::Cipher::from_base64_key(&config.db_encryption_key)?;
+    let repo = PgCameraRepo::new(pool, cipher);
+    let provisioner = MediaMtxProvisioner::new(&config.mediamtx_api_url);
+
+    let paths = provisioner.list_source_paths().await?;
+    let (mut imported, mut skipped) = (0u32, 0u32);
+
+    for p in paths {
+        // Solo cámaras de pull (source RTSP); saltamos regex y publishers.
+        let source = match p.source {
+            Some(s) if !p.name.starts_with('~') && s.starts_with("rtsp://") => s,
+            _ => {
+                skipped += 1;
+                continue;
+            }
+        };
+        if repo.find_by_path(&p.name).await?.is_some() {
+            info!("ya existe en BD, omito: {}", p.name);
+            skipped += 1;
+            continue;
+        }
+        repo.create(domain::models::NewCamera {
+            path: p.name.clone(),
+            rtsp_url: source,
+            record: p.record,
+            enabled: true,
+            description: None,
+        })
+        .await?;
+        imported += 1;
+        info!("importada: {}", p.name);
+    }
+
+    info!(
+        "Migración de cámaras: {} importada(s), {} omitida(s)",
+        imported, skipped
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subcomando: generar el hash Argon2 de un secreto (alta de proyectos).
@@ -681,6 +781,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
     info!("Configuración cargada: {:?}", config);
 
+    // Subcomando one-time: importar a la BD las cámaras del MediaMTX vivo.
+    if args.get(1).map(String::as_str) == Some("migrate-cameras") {
+        return migrate_cameras(&config).await;
+    }
+
     // Conexión a Postgres (con reintento) y migraciones de esquema al arranque
     // (HU 4.1). Fail-closed: si la BD o las migraciones fallan, no arrancamos.
     let db_pool = infra::db::connect_with_retry(&config.database_url).await?;
@@ -688,6 +793,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Crear estado de la aplicación
     let state = Arc::new(AppState::new(config.clone(), db_pool)?);
+
+    // Reconciler en segundo plano (HU 4.2): sincroniza BD → MediaMTX al arranque
+    // (con reintentos) y luego periódicamente para sanar deriva.
+    spawn_reconciler(state.reconciler.clone(), config.reconcile_interval_secs);
 
     // Construir router con documentación OpenAPI
     let app = Router::new()

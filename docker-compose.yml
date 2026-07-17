@@ -34,6 +34,9 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgres://mediamtx:mediamtx@postgres:5432/mediamtx}
       # Clave AES-256-GCM (base64 de 32 bytes) para cifrar la rtsp_url en reposo.
       - DB_ENCRYPTION_KEY=${DB_ENCRYPTION_KEY}
+      # Control API de MediaMTX (HU 4.2): destino del reconciler (interno).
+      - MEDIAMTX_API_URL=${MEDIAMTX_API_URL:-http://mediamtx:9997}
+      - RECONCILE_INTERVAL_SECS=${RECONCILE_INTERVAL_SECS:-300}
     volumes:
       - jwt-keys:/keys
       # Config con credenciales por proyecto (clients.json va gitignored).

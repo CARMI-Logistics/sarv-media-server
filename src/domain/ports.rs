@@ -61,3 +61,29 @@ pub trait FailureRepo: Send + Sync {
     /// Último registro de una cámara (para deduplicar alertas, HU 4.6).
     async fn latest_by_camera(&self, camera_path: &str) -> RepoResult<Option<Failure>>;
 }
+
+/// Error al aprovisionar rutas en el servidor de streaming (HU 4.2).
+/// No expone tipos de infraestructura (reqwest, etc.); el adaptador los traduce.
+#[derive(Debug, thiserror::Error)]
+pub enum ProvisionError {
+    #[error("la ruta no existe en el servidor de streaming")]
+    NotFound,
+    #[error("error del servidor de streaming: {0}")]
+    Backend(String),
+}
+
+pub type ProvisionResult<T> = Result<T, ProvisionError>;
+
+/// Puerto de aprovisionamiento: lleva la configuración de cámaras (fuente de
+/// verdad en la BD) al servidor de streaming (MediaMTX) vía su Control API.
+/// El reconciler depende de este puerto, no del cliente HTTP concreto (DIP).
+#[async_trait]
+pub trait CameraProvisioner: Send + Sync {
+    /// Alta o actualización (upsert) de la ruta de la cámara.
+    async fn apply(&self, camera: &Camera) -> ProvisionResult<()>;
+    /// Baja de una ruta por su nombre.
+    async fn remove(&self, path: &str) -> ProvisionResult<()>;
+    /// Nombres de las rutas de CÁMARA gestionables (pull RTSP): excluye
+    /// publishers y patrones regex, para que el reconciler solo administre lo suyo.
+    async fn list_paths(&self) -> ProvisionResult<Vec<String>>;
+}
