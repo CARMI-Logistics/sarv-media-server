@@ -20,19 +20,20 @@ use tracing::{info, warn};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_scalar::{Scalar, Servable};
 
-mod clients;
 mod crypto;
-// Dominio: algunos puertos/modelos (projects, failures) aún no los invoca un
-// endpoint (se consumen desde HU 4.3/4.6); se permite dead_code hasta entonces.
+// Dominio: algunos puertos/modelos (failures) aún no los invoca un endpoint
+// (se consumen desde HU 4.6); se permite dead_code hasta entonces.
 #[allow(dead_code)]
 mod domain;
 mod infra;
 mod keys;
+mod secret;
 mod services;
 
 use domain::ports::{CameraProvisioner, CameraRepo, FailureRepo, ProjectRepo};
 use infra::mediamtx::MediaMtxProvisioner;
 use infra::postgres::{PgCameraRepo, PgFailureRepo, PgProjectRepo};
+use services::auth::AuthService;
 use services::reconciler::ReconcilerService;
 
 // ============================================================================
@@ -48,7 +49,9 @@ struct Config {
     jwt_exp_minutes: i64,
     /// Ruta del archivo de la clave privada RSA (volumen persistente)
     jwt_private_key_path: String,
-    /// Ruta del archivo JSON con las credenciales por proyecto
+    /// Ruta del archivo JSON con credenciales (solo para el subcomando
+    /// `migrate-clients`; la autenticación en runtime ya usa la BD).
+    #[allow(dead_code)]
     clients_path: String,
     /// Cadena de conexión a Postgres (contiene credenciales → se redacta en logs)
     database_url: String,
@@ -221,8 +224,8 @@ struct AppState {
     encoding_key: EncodingKey,
     /// JWKS preconstruido en memoria
     jwks: Jwks,
-    /// Almacén de credenciales por proyecto
-    client_store: clients::ClientStore,
+    /// Autenticación de proyectos contra la BD (HU 4.3)
+    auth: Arc<AuthService>,
     /// Configuración
     config: Config,
     /// Repositorios (puertos) respaldados por Postgres (HU 4.1).
@@ -248,9 +251,6 @@ impl AppState {
         let jwks = Self::build_jwks(&material.public_key)?;
         info!("JWKS construido con kid='key1'");
 
-        // Cargar credenciales por proyecto (fail-closed si el archivo falta).
-        let client_store = clients::ClientStore::load(&config.clients_path);
-
         // Cifrador de credenciales de cámara en reposo (fail-closed: sin clave
         // válida no arrancamos; no podríamos almacenar cámaras de forma segura).
         let cipher = crypto::Cipher::from_base64_key(&config.db_encryption_key)?;
@@ -261,6 +261,9 @@ impl AppState {
         let camera_repo: Arc<dyn CameraRepo> = Arc::new(PgCameraRepo::new(db.clone(), cipher));
         let failure_repo: Arc<dyn FailureRepo> = Arc::new(PgFailureRepo::new(db));
 
+        // Autenticación de proyectos contra la BD (HU 4.3).
+        let auth = Arc::new(AuthService::new(project_repo.clone()));
+
         // Reconciler BD → MediaMTX (HU 4.2).
         let provisioner: Arc<dyn CameraProvisioner> =
             Arc::new(MediaMtxProvisioner::new(&config.mediamtx_api_url));
@@ -269,7 +272,7 @@ impl AppState {
         Ok(Self {
             encoding_key: material.encoding_key,
             jwks,
-            client_store,
+            auth,
             config,
             project_repo,
             camera_repo,
@@ -482,24 +485,28 @@ async fn login(
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
     info!("Intento de login para proyecto: {}", payload.client_id);
 
-    // Validar credenciales contra el almacén por proyecto (fail-closed).
-    if !state
-        .client_store
-        .verify(&payload.client_id, &payload.client_secret)
+    // Validar credenciales contra la BD (fail-closed).
+    let project = match state
+        .auth
+        .authenticate(&payload.client_id, &payload.client_secret)
+        .await
     {
-        warn!("Credenciales inválidas para proyecto: {}", payload.client_id);
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "Credenciales inválidas".to_string(),
-            }),
-        ));
-    }
+        Some(project) => project,
+        None => {
+            warn!("Credenciales inválidas para proyecto: {}", payload.client_id);
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Credenciales inválidas".to_string(),
+                }),
+            ));
+        }
+    };
 
     // Generar JWT
-    match state.generate_jwt(&payload.client_id) {
+    match state.generate_jwt(&project.client_id) {
         Ok(token) => {
-            info!("JWT generado exitosamente para proyecto: {}", payload.client_id);
+            info!("JWT generado exitosamente para proyecto: {}", project.client_id);
             Ok(Json(LoginResponse { token }))
         }
         Err(e) => {
@@ -752,6 +759,54 @@ async fn migrate_cameras(config: &Config) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+/// Subcomando one-time: importa a la BD los proyectos de `clients.json`
+/// (client_id + secret_hash ya hasheado) con `all_cameras=true` para preservar
+/// el comportamiento actual. Idempotente: omite los que ya existan.
+async fn migrate_clients(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    #[derive(serde::Deserialize)]
+    struct ClientEntry {
+        client_id: String,
+        secret_hash: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct ClientsFile {
+        clients: Vec<ClientEntry>,
+    }
+
+    let content = std::fs::read_to_string(&config.clients_path)
+        .map_err(|e| format!("no se pudo leer {}: {}", config.clients_path, e))?;
+    let file: ClientsFile =
+        serde_json::from_str(&content).map_err(|e| format!("clients.json inválido: {e}"))?;
+
+    let pool = infra::db::connect_with_retry(&config.database_url).await?;
+    infra::db::run_migrations(&pool).await?;
+    let repo = PgProjectRepo::new(pool);
+
+    let (mut imported, mut skipped) = (0u32, 0u32);
+    for c in file.clients {
+        if repo.find_by_client_id(&c.client_id).await?.is_some() {
+            info!("ya existe en BD, omito: {}", c.client_id);
+            skipped += 1;
+            continue;
+        }
+        repo.create(domain::models::NewProject {
+            client_id: c.client_id.clone(),
+            secret_hash: c.secret_hash,
+            all_cameras: true,
+            enabled: true,
+        })
+        .await?;
+        imported += 1;
+        info!("importado proyecto: {}", c.client_id);
+    }
+
+    info!(
+        "Migración de proyectos: {} importado(s), {} omitido(s)",
+        imported, skipped
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subcomando: generar el hash Argon2 de un secreto (alta de proyectos).
@@ -761,7 +816,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let secret = args
             .get(2)
             .ok_or("uso: mediamtx-auth-backend hash <secreto>")?;
-        println!("{}", clients::hash_secret(secret)?);
+        println!("{}", secret::hash_secret(secret)?);
         return Ok(());
     }
 
@@ -784,6 +839,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Subcomando one-time: importar a la BD las cámaras del MediaMTX vivo.
     if args.get(1).map(String::as_str) == Some("migrate-cameras") {
         return migrate_cameras(&config).await;
+    }
+
+    // Subcomando one-time: importar a la BD los proyectos de clients.json.
+    if args.get(1).map(String::as_str) == Some("migrate-clients") {
+        return migrate_clients(&config).await;
     }
 
     // Conexión a Postgres (con reintento) y migraciones de esquema al arranque
