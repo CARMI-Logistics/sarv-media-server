@@ -29,6 +29,11 @@ services:
       - JWT_PRIVATE_KEY_PATH=/keys/jwt_private_key.pem
       # Credenciales por proyecto (HU 2.2): archivo JSON con secretos hasheados.
       - CLIENTS_PATH=/config/clients.json
+      # Base de datos (HU 4.1). Dev: Postgres local (profile "localdb").
+      # Prod: Cloud SQL — sobrescribir DATABASE_URL en .env (sin el profile).
+      - DATABASE_URL=${DATABASE_URL:-postgres://mediamtx:mediamtx@postgres:5432/mediamtx}
+      # Clave AES-256-GCM (base64 de 32 bytes) para cifrar la rtsp_url en reposo.
+      - DB_ENCRYPTION_KEY=${DB_ENCRYPTION_KEY}
     volumes:
       - jwt-keys:/keys
       # Config con credenciales por proyecto (clients.json va gitignored).
@@ -40,6 +45,36 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - mediamtx-network
+
+  # ---------------------------------------------------------------------------
+  # Postgres - Base de datos del media server (SOLO desarrollo local)
+  # En producción se usa Cloud SQL; sin el profile "localdb" este servicio no
+  # arranca. Nunca se publica al exterior (solo red interna).
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: media-server-postgres
+    profiles: ["localdb"]
+    # Dev: publicado SOLO en loopback para pruebas locales (cargo test, psql).
+    # Puerto host 15432 para no chocar con un Postgres local en 5432.
+    # En prod no se usa este servicio (Cloud SQL); no se expone al exterior.
+    ports:
+      - "127.0.0.1:15432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-mediamtx}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mediamtx}
+      - POSTGRES_DB=${POSTGRES_DB:-mediamtx}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-mediamtx} -d $${POSTGRES_DB:-mediamtx}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
     networks:
       - mediamtx-network
 
@@ -162,3 +197,4 @@ volumes:
   jwt-keys:
   caddy-data:
   caddy-config:
+  pgdata:

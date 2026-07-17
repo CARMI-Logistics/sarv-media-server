@@ -13,6 +13,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use std::{env, sync::Arc};
 use time::{Duration, OffsetDateTime};
 use tracing::{info, warn};
@@ -20,14 +21,26 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_scalar::{Scalar, Servable};
 
 mod clients;
+// Cifrado en reposo: se ejercita en tests, pero ningún endpoint lo llama aún
+// (lo consumen los servicios/handlers desde HU 4.2+).
+#[allow(dead_code)]
+mod crypto;
+// Dominio y adaptadores: validados por tests, pero aún no los invoca un endpoint
+// (se consumen desde HU 4.2+); se permite dead_code hasta entonces.
+#[allow(dead_code)]
+mod domain;
+mod infra;
 mod keys;
+
+use domain::ports::{CameraRepo, FailureRepo, ProjectRepo};
+use infra::postgres::{PgCameraRepo, PgFailureRepo, PgProjectRepo};
 
 // ============================================================================
 // Configuración
 // ============================================================================
 
 /// Configuración del servidor leída de variables de entorno
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Config {
     /// Puerto del servidor HTTP
     server_port: u16,
@@ -37,6 +50,24 @@ struct Config {
     jwt_private_key_path: String,
     /// Ruta del archivo JSON con las credenciales por proyecto
     clients_path: String,
+    /// Cadena de conexión a Postgres (contiene credenciales → se redacta en logs)
+    database_url: String,
+    /// Clave AES-256-GCM en base64 para cifrado en reposo (secreto → se redacta)
+    db_encryption_key: String,
+}
+
+/// `Debug` manual: NUNCA imprime la cadena de conexión ni la clave de cifrado.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("server_port", &self.server_port)
+            .field("jwt_exp_minutes", &self.jwt_exp_minutes)
+            .field("jwt_private_key_path", &self.jwt_private_key_path)
+            .field("clients_path", &self.clients_path)
+            .field("database_url", &"<redactado>")
+            .field("db_encryption_key", &"<redactado>")
+            .finish()
+    }
 }
 
 impl Config {
@@ -58,11 +89,18 @@ impl Config {
         let clients_path = env::var("CLIENTS_PATH")
             .unwrap_or_else(|_| "/config/clients.json".to_string());
 
+        let database_url = env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://mediamtx:mediamtx@localhost:5432/mediamtx".to_string());
+
+        let db_encryption_key = env::var("DB_ENCRYPTION_KEY").unwrap_or_default();
+
         Self {
             server_port,
             jwt_exp_minutes,
             jwt_private_key_path,
             clients_path,
+            database_url,
+            db_encryption_key,
         }
     }
 }
@@ -171,11 +209,19 @@ struct AppState {
     client_store: clients::ClientStore,
     /// Configuración
     config: Config,
+    /// Repositorios (puertos) respaldados por Postgres (HU 4.1).
+    /// Aún sin consumir por los handlers; se usan desde HU 4.2+.
+    #[allow(dead_code)]
+    project_repo: Arc<dyn ProjectRepo>,
+    #[allow(dead_code)]
+    camera_repo: Arc<dyn CameraRepo>,
+    #[allow(dead_code)]
+    failure_repo: Arc<dyn FailureRepo>,
 }
 
 impl AppState {
     /// Crea un nuevo AppState generando un par de claves RSA
-    fn new(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(config: Config, db: PgPool) -> Result<Self, Box<dyn std::error::Error>> {
         // Carga la clave de firma persistente (o la genera y guarda la 1a vez).
         let material = keys::load_or_create(&config.jwt_private_key_path)?;
 
@@ -186,11 +232,24 @@ impl AppState {
         // Cargar credenciales por proyecto (fail-closed si el archivo falta).
         let client_store = clients::ClientStore::load(&config.clients_path);
 
+        // Cifrador de credenciales de cámara en reposo (fail-closed: sin clave
+        // válida no arrancamos; no podríamos almacenar cámaras de forma segura).
+        let cipher = crypto::Cipher::from_base64_key(&config.db_encryption_key)?;
+        info!("Cifrado en reposo inicializado (AES-256-GCM)");
+
+        // Repositorios (adaptadores Postgres) detrás de los puertos del dominio.
+        let project_repo: Arc<dyn ProjectRepo> = Arc::new(PgProjectRepo::new(db.clone()));
+        let camera_repo: Arc<dyn CameraRepo> = Arc::new(PgCameraRepo::new(db.clone(), cipher));
+        let failure_repo: Arc<dyn FailureRepo> = Arc::new(PgFailureRepo::new(db));
+
         Ok(Self {
             encoding_key: material.encoding_key,
             jwks,
             client_store,
             config,
+            project_repo,
+            camera_repo,
+            failure_repo,
         })
     }
 
@@ -622,8 +681,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
     info!("Configuración cargada: {:?}", config);
 
+    // Conexión a Postgres (con reintento) y migraciones de esquema al arranque
+    // (HU 4.1). Fail-closed: si la BD o las migraciones fallan, no arrancamos.
+    let db_pool = infra::db::connect_with_retry(&config.database_url).await?;
+    infra::db::run_migrations(&db_pool).await?;
+
     // Crear estado de la aplicación
-    let state = Arc::new(AppState::new(config.clone())?);
+    let state = Arc::new(AppState::new(config.clone(), db_pool)?);
 
     // Construir router con documentación OpenAPI
     let app = Router::new()

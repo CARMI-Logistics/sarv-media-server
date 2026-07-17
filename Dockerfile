@@ -22,6 +22,10 @@ RUN cargo build --release && rm -rf src
 # Copiar código fuente real
 COPY src ./src
 
+# Migraciones de esquema: sqlx::migrate! las embebe en tiempo de compilación,
+# así que el directorio debe existir durante el build (HU 4.1).
+COPY migrations ./migrations
+
 # Recompilar con código real (touch para forzar rebuild)
 RUN touch src/main.rs && cargo build --release
 

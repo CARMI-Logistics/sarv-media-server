@@ -1,0 +1,3 @@
+# Migraciones de esquema (sqlx). El esquema inicial llega en el sub-paso 3
+# (0001_init.sql). Este archivo mantiene el directorio en git; sqlx::migrate!
+# ignora los archivos que no sean *.sql.

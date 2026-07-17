@@ -42,3 +42,22 @@ utoipa-scalar = { version = "0.1", features = ["axum"] }
 
 # Variables de entorno desde .env
 dotenvy = "0.15"
+
+# Base de datos (HU 4.1): Postgres async + migraciones.
+# Sin backend TLS: en dev la conexión es local y en prod va por el Cloud SQL
+# Auth Proxy (TLS lo maneja el proxy). Se puede añadir tls-rustls-ring si algún
+# día conectamos directo a Cloud SQL con SSL.
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+
+# Tipos de dominio (HU 4.1)
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Contratos async (puertos) usados como objetos de trait (dyn)
+async-trait = "0.1"
+
+# Errores de dominio
+thiserror = "1"
+
+# Cifrado en reposo de credenciales de cámara (HU 4.1)
+aes-gcm = "0.10"
