@@ -9,7 +9,15 @@ use std::sync::Arc;
 use tracing::warn;
 
 use crate::domain::models::Project;
-use crate::domain::ports::ProjectRepo;
+use crate::domain::ports::{ProjectRepo, RepoResult};
+
+/// Acceso de un proyecto a las cámaras (autorización granular, HU 4.4).
+pub enum CameraAccess {
+    /// Acceso a todas las cámaras (bandera all_cameras).
+    All,
+    /// Acceso solo a estos paths de cámara (relación n-a-n).
+    Only(Vec<String>),
+}
 
 pub struct AuthService {
     projects: Arc<dyn ProjectRepo>,
@@ -43,11 +51,23 @@ impl AuthService {
             None
         }
     }
+
+    /// Determina el acceso a cámaras del proyecto, para construir los permisos
+    /// del JWT: todas (bandera all_cameras) o solo las asignadas (n-a-n).
+    pub async fn camera_access(&self, project: &Project) -> RepoResult<CameraAccess> {
+        if project.all_cameras {
+            Ok(CameraAccess::All)
+        } else {
+            Ok(CameraAccess::Only(
+                self.projects.allowed_camera_paths(project.id).await?,
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AuthService;
+    use super::{AuthService, CameraAccess};
     use crate::domain::models::{NewProject, Project};
     use crate::domain::ports::{ProjectRepo, RepoError, RepoResult};
     use async_trait::async_trait;
@@ -58,6 +78,7 @@ mod tests {
     /// Repo falso: solo implementa `find_by_client_id`.
     struct FakeProjectRepo {
         project: Option<Project>,
+        allowed: Vec<String>,
         fail: bool,
     }
 
@@ -88,7 +109,7 @@ mod tests {
             unimplemented!()
         }
         async fn allowed_camera_paths(&self, _: Uuid) -> RepoResult<Vec<String>> {
-            unimplemented!()
+            Ok(self.allowed.clone())
         }
     }
 
@@ -107,6 +128,7 @@ mod tests {
     fn service(project: Option<Project>) -> AuthService {
         AuthService::new(Arc::new(FakeProjectRepo {
             project,
+            allowed: vec![],
             fail: false,
         }))
     }
@@ -140,8 +162,37 @@ mod tests {
     async fn fails_closed_on_repo_error() {
         let svc = AuthService::new(Arc::new(FakeProjectRepo {
             project: None,
+            allowed: vec![],
             fail: true,
         }));
         assert!(svc.authenticate("sigac", "s3cret").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn camera_access_all_when_flag_set() {
+        let p = project("sigac", "s3cret", true); // project() usa all_cameras=true
+        let svc = AuthService::new(Arc::new(FakeProjectRepo {
+            project: Some(p.clone()),
+            allowed: vec!["ignorado".into()],
+            fail: false,
+        }));
+        assert!(matches!(svc.camera_access(&p).await.unwrap(), CameraAccess::All));
+    }
+
+    #[tokio::test]
+    async fn camera_access_only_assigned_when_not_all() {
+        let mut p = project("sigac", "s3cret", true);
+        p.all_cameras = false;
+        let svc = AuthService::new(Arc::new(FakeProjectRepo {
+            project: Some(p.clone()),
+            allowed: vec!["cam-a".into(), "cam-b".into()],
+            fail: false,
+        }));
+        match svc.camera_access(&p).await.unwrap() {
+            CameraAccess::Only(paths) => {
+                assert_eq!(paths, vec!["cam-a".to_string(), "cam-b".to_string()])
+            }
+            CameraAccess::All => panic!("esperaba Only"),
+        }
     }
 }

@@ -33,7 +33,7 @@ mod services;
 use domain::ports::{CameraProvisioner, CameraRepo, FailureRepo, ProjectRepo};
 use infra::mediamtx::MediaMtxProvisioner;
 use infra::postgres::{PgCameraRepo, PgFailureRepo, PgProjectRepo};
-use services::auth::AuthService;
+use services::auth::{AuthService, CameraAccess};
 use services::reconciler::ReconcilerService;
 
 // ============================================================================
@@ -306,27 +306,18 @@ impl AppState {
     }
 
     /// Genera un JWT firmado con RS256
-    fn generate_jwt(&self, client_id: &str) -> Result<String, jsonwebtoken::errors::Error> {
+    fn generate_jwt(
+        &self,
+        client_id: &str,
+        permissions: Vec<MtxPermission>,
+    ) -> Result<String, jsonwebtoken::errors::Error> {
         let now = OffsetDateTime::now_utc();
         let exp = now + Duration::minutes(self.config.jwt_exp_minutes);
 
         let claims = Claims {
             sub: client_id.to_string(),
             exp: exp.unix_timestamp(),
-            mediamtx_permissions: vec![
-                MtxPermission {
-                    action: "read".to_string(),
-                    path: "".to_string(),
-                },
-                MtxPermission {
-                    action: "publish".to_string(),
-                    path: "".to_string(),
-                },
-                MtxPermission {
-                    action: "playback".to_string(),
-                    path: "".to_string(),
-                },
-            ],
+            mediamtx_permissions: permissions,
         };
 
         // Header con kid y algoritmo RS256
@@ -335,6 +326,32 @@ impl AppState {
 
         encode(&header, &claims, &self.encoding_key)
     }
+}
+
+/// Construye los permisos de MediaMTX (read + playback) según el acceso del
+/// proyecto (HU 4.4). `All` → path vacío (todas); `Only` → una entrada por cámara.
+/// No se incluye `publish`: los publishers están en `authJWTExclude`.
+fn build_permissions(access: &CameraAccess) -> Vec<MtxPermission> {
+    let mut perms = Vec::new();
+    let mut grant = |path: String| {
+        perms.push(MtxPermission {
+            action: "read".to_string(),
+            path: path.clone(),
+        });
+        perms.push(MtxPermission {
+            action: "playback".to_string(),
+            path,
+        });
+    };
+    match access {
+        CameraAccess::All => grant(String::new()),
+        CameraAccess::Only(paths) => {
+            for p in paths {
+                grant(p.clone());
+            }
+        }
+    }
+    perms
 }
 
 // ============================================================================
@@ -503,8 +520,26 @@ async fn login(
         }
     };
 
+    // Permisos granulares según el acceso del proyecto (HU 4.4).
+    let access = match state.auth.camera_access(&project).await {
+        Ok(access) => access,
+        Err(e) => {
+            warn!(
+                "Error calculando el acceso del proyecto {}: {}",
+                project.client_id, e
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "Error interno".to_string(),
+                }),
+            ));
+        }
+    };
+    let permissions = build_permissions(&access);
+
     // Generar JWT
-    match state.generate_jwt(&project.client_id) {
+    match state.generate_jwt(&project.client_id, permissions) {
         Ok(token) => {
             info!("JWT generado exitosamente para proyecto: {}", project.client_id);
             Ok(Json(LoginResponse { token }))
@@ -889,4 +924,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Devuelve la especificación OpenAPI en formato JSON
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_permissions, CameraAccess};
+
+    #[test]
+    fn all_grants_read_and_playback_wildcard() {
+        let perms = build_permissions(&CameraAccess::All);
+        assert_eq!(perms.len(), 2);
+        assert!(perms.iter().all(|p| p.path.is_empty()));
+        let actions: Vec<&str> = perms.iter().map(|p| p.action.as_str()).collect();
+        assert!(actions.contains(&"read"));
+        assert!(actions.contains(&"playback"));
+        assert!(!actions.contains(&"publish"), "no debe conceder publish");
+    }
+
+    #[test]
+    fn only_grants_read_and_playback_per_camera() {
+        let perms = build_permissions(&CameraAccess::Only(vec!["cam-a".into(), "cam-b".into()]));
+        assert_eq!(perms.len(), 4); // 2 cámaras × (read + playback)
+        let read_paths: Vec<&str> = perms
+            .iter()
+            .filter(|p| p.action == "read")
+            .map(|p| p.path.as_str())
+            .collect();
+        assert_eq!(read_paths, vec!["cam-a", "cam-b"]);
+    }
+
+    #[test]
+    fn empty_only_grants_nothing() {
+        assert!(build_permissions(&CameraAccess::Only(vec![])).is_empty());
+    }
 }
