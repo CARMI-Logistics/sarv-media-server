@@ -2,3 +2,4 @@
 //! llamadas de servicios/repositorios y respuestas a DTOs (sin exponer secretos).
 
 pub mod admin;
+pub mod consumer;

@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{encode, Algorithm, DecodingKey, EncodingKey, Header};
 use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -230,6 +230,8 @@ struct Jwks {
 struct AppState {
     /// Clave para firmar JWT (RS256)
     encoding_key: EncodingKey,
+    /// Clave para validar JWT (RS256); se usa en GET /cameras (HU 4.7)
+    decoding_key: DecodingKey,
     /// JWKS preconstruido en memoria
     jwks: Jwks,
     /// Autenticación de proyectos contra la BD (HU 4.3)
@@ -277,6 +279,7 @@ impl AppState {
 
         Ok(Self {
             encoding_key: material.encoding_key,
+            decoding_key: material.decoding_key,
             jwks,
             auth,
             config,
@@ -700,7 +703,8 @@ The JWT contains the following claims:
         (name = "Authentication", description = "User authentication and token generation"),
         (name = "JWT & Token Management", description = "JSON Web Key Set and token validation endpoints"),
         (name = "System & Monitoring", description = "Health checks and service status"),
-        (name = "Administration", description = "CRUD de cámaras y proyectos (requiere ADMIN_API_TOKEN)")
+        (name = "Administration", description = "CRUD de cámaras y proyectos (requiere ADMIN_API_TOKEN)"),
+        (name = "Consumer", description = "Consulta de cámaras accesibles por proyecto (JWT)")
     ),
     modifiers(&SecurityAddon),
     paths(
@@ -716,7 +720,8 @@ The JWT contains the following claims:
         http::admin::create_project,
         http::admin::get_project,
         http::admin::update_project,
-        http::admin::delete_project
+        http::admin::delete_project,
+        http::consumer::list_my_cameras
     ),
     components(
         schemas(
@@ -733,7 +738,8 @@ The JWT contains the following claims:
             http::admin::UpdateCameraRequest,
             http::admin::ProjectResponse,
             http::admin::CreateProjectRequest,
-            http::admin::UpdateProjectRequest
+            http::admin::UpdateProjectRequest,
+            http::consumer::CameraRef
         )
     )
 )]
@@ -748,6 +754,15 @@ impl Modify for SecurityAddon {
             components.add_security_scheme(
                 "admin_token",
                 SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
+            );
+            components.add_security_scheme(
+                "project_jwt",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("JWT")
+                        .build(),
+                ),
             );
         }
     }
@@ -943,6 +958,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", get(health))
         .route("/jwks", get(get_jwks))
         .route("/auth/login", post(login))
+        // Consumo por proyecto (SIGAC/Odin): lista de cámaras accesibles (JWT)
+        .merge(http::consumer::router())
         // Panel de administración
         .nest("/admin", admin)
         // Documentación OpenAPI (Scalar UI)

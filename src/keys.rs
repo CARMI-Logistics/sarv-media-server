@@ -8,9 +8,9 @@
 use std::fs;
 use std::path::Path;
 
-use jsonwebtoken::EncodingKey;
+use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::rngs::OsRng;
-use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
+use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use tracing::info;
 
@@ -18,6 +18,8 @@ use tracing::info;
 pub struct SigningMaterial {
     /// Clave para firmar JWT (RS256).
     pub encoding_key: EncodingKey,
+    /// Clave para validar JWT emitidos (RS256), p.ej. en GET /cameras (HU 4.7).
+    pub decoding_key: DecodingKey,
     /// Clave pública, para construir el JWKS.
     pub public_key: RsaPublicKey,
 }
@@ -41,8 +43,12 @@ pub fn load_or_create(path: &str) -> Result<SigningMaterial, Box<dyn std::error:
     let private_pem = private_key.to_pkcs8_pem(LineEnding::LF)?;
     let encoding_key = EncodingKey::from_rsa_pem(private_pem.as_bytes())?;
 
+    let public_pem = public_key.to_public_key_pem(LineEnding::LF)?;
+    let decoding_key = DecodingKey::from_rsa_pem(public_pem.as_bytes())?;
+
     Ok(SigningMaterial {
         encoding_key,
+        decoding_key,
         public_key,
     })
 }
