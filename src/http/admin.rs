@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{header::AUTHORIZATION, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -17,7 +17,7 @@ use tracing::warn;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::domain::models::{Camera, NewCamera, NewProject, Project};
+use crate::domain::models::{Camera, Failure, NewCamera, NewFailure, NewProject, Project, Severity};
 use crate::domain::ports::RepoError;
 use crate::AppState;
 
@@ -64,6 +64,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/projects/:id",
             get(get_project).patch(update_project).delete(delete_project),
         )
+        .route("/failures", get(list_failures).post(record_failure))
 }
 
 /// Traduce un error de repositorio a una respuesta HTTP (sin filtrar detalles).
@@ -157,6 +158,53 @@ pub struct UpdateProjectRequest {
     pub all_cameras: Option<bool>,
     pub enabled: Option<bool>,
     pub camera_ids: Option<Vec<Uuid>>, // reasignar cámaras
+}
+
+/// Registro de un diagnóstico (lo envía el agente, ya redactado).
+#[derive(Deserialize, ToSchema)]
+pub struct RecordFailureRequest {
+    pub camera_path: String,
+    /// "ok" | "warn" | "error"
+    pub severity: String,
+    pub diagnosis: Option<String>,
+    #[schema(value_type = Object)]
+    pub raw: Option<serde_json::Value>,
+    /// Momento de detección; por defecto, ahora.
+    pub detected_at: Option<DateTime<Utc>>,
+}
+
+/// Entrada del historial de diagnósticos.
+#[derive(Serialize, ToSchema)]
+pub struct FailureResponse {
+    pub id: i64,
+    pub camera_path: String,
+    pub detected_at: DateTime<Utc>,
+    pub severity: String,
+    pub diagnosis: Option<String>,
+    #[schema(value_type = Object)]
+    pub raw: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<Failure> for FailureResponse {
+    fn from(f: Failure) -> Self {
+        Self {
+            id: f.id,
+            camera_path: f.camera_path,
+            detected_at: f.detected_at,
+            severity: f.severity.as_str().to_string(),
+            diagnosis: f.diagnosis,
+            raw: f.raw,
+            created_at: f.created_at,
+        }
+    }
+}
+
+/// Filtros de consulta del historial.
+#[derive(Deserialize)]
+pub struct FailureQuery {
+    pub camera: String,
+    pub limit: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +532,58 @@ pub async fn delete_project(
 ) -> Result<StatusCode, (StatusCode, String)> {
     state.project_repo.delete(id).await.map_err(repo_err)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post, path = "/admin/failures", tag = "Administration",
+    security(("admin_token" = [])),
+    request_body = RecordFailureRequest,
+    responses(
+        (status = 201, description = "Diagnóstico registrado", body = FailureResponse),
+        (status = 401, description = "No autorizado")
+    )
+)]
+pub async fn record_failure(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RecordFailureRequest>,
+) -> Result<(StatusCode, Json<FailureResponse>), (StatusCode, String)> {
+    let failure = state
+        .failure_repo
+        .record(NewFailure {
+            camera_path: req.camera_path,
+            detected_at: req.detected_at.unwrap_or_else(Utc::now),
+            severity: Severity::from_db(&req.severity),
+            diagnosis: req.diagnosis,
+            raw: req.raw,
+        })
+        .await
+        .map_err(repo_err)?;
+    Ok((StatusCode::CREATED, Json(failure.into())))
+}
+
+#[utoipa::path(
+    get, path = "/admin/failures", tag = "Administration",
+    security(("admin_token" = [])),
+    params(
+        ("camera" = String, Query, description = "Path de la cámara"),
+        ("limit" = Option<i64>, Query, description = "Máximo de registros (default 50)")
+    ),
+    responses(
+        (status = 200, description = "Historial de la cámara", body = [FailureResponse]),
+        (status = 401, description = "No autorizado")
+    )
+)]
+pub async fn list_failures(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<FailureQuery>,
+) -> Result<Json<Vec<FailureResponse>>, (StatusCode, String)> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let failures = state
+        .failure_repo
+        .list_by_camera(&q.camera, limit)
+        .await
+        .map_err(repo_err)?;
+    Ok(Json(failures.into_iter().map(FailureResponse::from).collect()))
 }
 
 #[cfg(test)]

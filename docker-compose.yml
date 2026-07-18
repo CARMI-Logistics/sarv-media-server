@@ -154,6 +154,9 @@ services:
       - MEDIAMTX_API_URL=http://mediamtx:9997
       - MEDIAMTX_HLS_URL=http://mediamtx:8888
       - MEDIAMTX_LOG_PATH=/shared-logs/mediamtx.log
+      # Historial en el backend (HU 4.6): mismo ADMIN_API_TOKEN que el backend.
+      - BACKEND_URL=${BACKEND_URL:-http://mediamtx-backend:8080}
+      - ADMIN_API_TOKEN=${ADMIN_API_TOKEN:-}
     volumes:
       # Lee el log de MediaMTX en solo lectura (HU 1.3: el agente solo observa)
       - shared-logs:/shared-logs:ro

@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     notify_channel: str = "slack"
     slack_webhook_url: str | None = None
 
+    # --- Historial en el backend (HU 4.6) ---
+    backend_url: str = "http://mediamtx-backend:8080"
+    # Token de administración para POST/GET /admin/failures. Sin él, el historial
+    # queda deshabilitado (Null) y el agente notifica en cada corrida como antes.
+    admin_api_token: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

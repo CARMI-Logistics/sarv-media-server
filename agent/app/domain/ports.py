@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from app.domain.models import (
     CameraSnapshot,
+    Diagnosis,
     Finding,
     HlsMuxerState,
     LogEvent,
@@ -67,3 +68,17 @@ class Notifier(Protocol):
     """Canal de notificación: envía un mensaje ya formateado."""
 
     async def send(self, message: str) -> None: ...
+
+
+@runtime_checkable
+class FailureHistory(Protocol):
+    """Historial de diagnósticos (persistido en el backend).
+
+    `record` guarda un diagnóstico; `has_changed` indica si el estado de la
+    cámara difiere del último registrado (para deduplicar alertas). El mapeo del
+    estado a la severidad del backend es responsabilidad del adaptador.
+    """
+
+    async def record(self, diagnosis: Diagnosis) -> None: ...
+
+    async def has_changed(self, diagnosis: Diagnosis) -> bool: ...

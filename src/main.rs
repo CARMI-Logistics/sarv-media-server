@@ -242,7 +242,6 @@ struct AppState {
     /// Aún sin consumir por los handlers; se usan desde HU 4.2+.
     project_repo: Arc<dyn ProjectRepo>,
     camera_repo: Arc<dyn CameraRepo>,
-    #[allow(dead_code)]
     failure_repo: Arc<dyn FailureRepo>,
     /// Reconciler BD → MediaMTX (HU 4.2). Lo usa la tarea de arranque y, en
     /// HU 4.5, los endpoints de administración para sync puntual.
@@ -721,6 +720,8 @@ The JWT contains the following claims:
         http::admin::get_project,
         http::admin::update_project,
         http::admin::delete_project,
+        http::admin::record_failure,
+        http::admin::list_failures,
         http::consumer::list_my_cameras
     ),
     components(
@@ -739,6 +740,8 @@ The JWT contains the following claims:
             http::admin::ProjectResponse,
             http::admin::CreateProjectRequest,
             http::admin::UpdateProjectRequest,
+            http::admin::RecordFailureRequest,
+            http::admin::FailureResponse,
             http::consumer::CameraRef
         )
     )

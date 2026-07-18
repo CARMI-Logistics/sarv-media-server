@@ -10,11 +10,13 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.config import get_settings
-from app.domain.ports import Notifier
+from app.domain.ports import FailureHistory, Notifier
 from app.graph import build_graph
+from app.infra.failure_history_api import FailureHistoryApi
 from app.infra.gemini import GeminiClient
 from app.infra.log_reader import FileLogReader
 from app.infra.mediamtx_api import MediaMtxApiClient
+from app.infra.null_failure_history import NullFailureHistory
 from app.infra.null_notifier import NullNotifier
 from app.infra.slack import SlackNotifier
 from app.rules import default_rules
@@ -88,5 +90,19 @@ def get_notification_service() -> NotificationService:
 
 
 @lru_cache
+def get_failure_history() -> FailureHistory:
+    settings = get_settings()
+    # Con token configurado, persiste en el backend; si no, historial deshabilitado.
+    if settings.admin_api_token:
+        return FailureHistoryApi(settings.backend_url, settings.admin_api_token)
+    return NullFailureHistory()
+
+
+@lru_cache
 def get_agent_runner() -> AgentRunner:
-    return AgentRunner(get_agent_graph(), get_notification_service())
+    return AgentRunner(
+        get_agent_graph(),
+        get_notification_service(),
+        get_failure_history(),
+        get_redactor(),
+    )
