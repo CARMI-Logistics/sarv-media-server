@@ -130,8 +130,10 @@ pathDefaults:
   # y la pérdida de paquetes/MTU de UDP. Reversible: poner 'automatic' o quitar la línea.
   rtspTransport: tcp
 
-  # Grabación por defecto
-  record: yes
+  # Grabación DESHABILITADA a propósito: evita llenar el disco de la VM.
+  # Para habilitarla, poner record: yes Y provisionar almacenamiento acorde a
+  # recordDeleteAfter (idealmente un disco aparte o descarga a GCS).
+  record: no
   recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
   recordFormat: fmp4
   recordPartDuration: 2s
@@ -170,7 +172,7 @@ paths:
 
   ~^live/.*$:
       source: publisher
-      record: yes
+      record: no
       recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
       recordFormat: fmp4
       recordPartDuration: 5s

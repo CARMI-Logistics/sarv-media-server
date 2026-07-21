@@ -1,0 +1,65 @@
+# =============================================================================
+# Override de PRODUCCIÓN (HU 3.1)
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Endurecimiento: SOLO Caddy (80/443) queda público. El backend, MediaMTX y el
+# agente DEJAN de publicar puertos al host → quedan accesibles únicamente por la
+# red interna del compose (Caddy los alcanza por nombre: mediamtx:8888, etc.).
+#
+# Notas:
+#  - `!reset []` vacía la lista de puertos heredada del compose base (requiere
+#    Docker Compose >= 2.24).
+#  - El Postgres local NO arranca en prod: está tras el profile "localdb" y aquí
+#    no se activa; la BD es Cloud SQL (ver docker-compose.prod añadirá el Auth Proxy).
+#  - Video público = HLS por Caddy 443. WebRTC (UDP) queda fuera a propósito.
+# =============================================================================
+
+services:
+  mediamtx-backend:
+    ports: !reset []
+    # DATABASE_URL (en el .env de prod) apunta al proxy, no al Postgres local:
+    #   DATABASE_URL=postgres://<user>:<pass>@cloudsql-proxy:5432/<db>
+    depends_on:
+      - cloudsql-proxy
+
+  mediamtx:
+    ports: !reset []
+
+  # Agente: privado (NO público, Caddy no lo rutea), pero publicado en el
+  # LOOPBACK de la VM para poder disparar sus endpoints por túnel SSH:
+  #   ssh -L 8090:localhost:8090 usuario@vm
+  #   curl -H "Authorization: Bearer $AGENT_API_TOKEN" localhost:8090/diagnose
+  # (loopback = no accesible desde internet; el scheduler igual corre solo).
+  stream-agent:
+    ports: !override
+      - "127.0.0.1:8090:8090"
+
+  # Caddy en prod: dominio real + Let's Encrypt (usa Caddyfile.prod, sin tls internal).
+  caddy:
+    environment:
+      - CADDY_SITE_ADDRESS=${CADDY_SITE_ADDRESS:-media.carmi.com}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-^$$}
+    volumes: !override
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # ---------------------------------------------------------------------------
+  # Cloud SQL Auth Proxy (HU 3.1): túnel seguro (IAM + TLS) a la instancia de
+  # Cloud SQL. Expone 5432 solo en la red interna (cloudsql-proxy:5432).
+  # Autenticación:
+  #  - En una VM de GCE con service account (rol "Cloud SQL Client") usa ADC
+  #    automáticamente (sin archivo de clave). ← recomendado.
+  #  - Fuera de GCE: monta una key JSON y añade "--credentials-file=/key.json".
+  # ---------------------------------------------------------------------------
+  cloudsql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+    command:
+      - "${CLOUDSQL_INSTANCE}"          # project:region:instance
+      - "--address=0.0.0.0"
+      - "--port=5432"
+    restart: unless-stopped
+    networks:
+      - mediamtx-network

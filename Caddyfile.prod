@@ -1,19 +1,15 @@
 # =============================================================================
-# Caddy — frente HTTPS del media server (HU 2.1)
+# Caddy — PRODUCCIÓN (HU 3.1)
 # =============================================================================
-# Termina TLS y reenvía en HTTP interno al backend (login/JWKS) y a MediaMTX (HLS).
+# Igual que el Caddyfile de dev pero SIN 'tls internal': Caddy emite y RENUEVA
+# certificados válidos con Let's Encrypt para CADDY_SITE_ADDRESS (dominio real).
 #
-# Dev:        CADDY_SITE_ADDRESS=localhost (default) + 'tls internal' (CA interna,
-#            autofirmado). Acceso por https://localhost, curl -k.
-# LAN:        CADDY_SITE_ADDRESS=tu-host (p.ej. media.local, con DNS/hosts). Caddy
-#            emite un cert interno para ese nombre (el acceso debe usar ese nombre,
-#            no la IP, para que haya SNI).
-# Producción: CADDY_SITE_ADDRESS=tu-dominio.com y QUITA 'tls internal' para que
-#            Caddy emita certificados válidos con Let's Encrypt.
+# Requisitos: el dominio (p.ej. media.carmi.com) debe resolver a la IP pública
+# de la VM (DNS A) y los puertos 80 y 443 deben estar abiertos (80 = reto ACME).
 # =============================================================================
 
-{$CADDY_SITE_ADDRESS:localhost} {
-	tls internal
+{$CADDY_SITE_ADDRESS} {
+	# (sin 'tls internal' → certificado Let's Encrypt automático)
 
 	# --- Rate limit por IP (plugin caddy-ratelimit) -> 429 al exceder ---
 	rate_limit {
@@ -25,7 +21,6 @@
 	}
 
 	# --- CORS: solo orígenes permitidos (CORS_ALLOWED_ORIGINS = regex de Origin) ---
-	# Default '^$' = ningún origen cross-site permitido (fail-safe).
 	@origin_ok header_regexp Origin {$CORS_ALLOWED_ORIGINS:^$}
 	header @origin_ok {
 		Access-Control-Allow-Origin "{http.request.header.Origin}"

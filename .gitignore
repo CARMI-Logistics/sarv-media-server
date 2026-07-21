@@ -21,6 +21,7 @@ Cargo.lock
 # Environment
 .env
 .env.local
+.env.prod
 
 # Planes internos (no versionar)
 /plans/
@@ -30,3 +31,6 @@ mediamtx.yml
 
 # Credenciales por proyecto (hashes) - no versionar (sí el .example)
 config/clients.json
+
+# Script de seeding (herramienta operativa que maneja secretos por entorno)
+scripts/seed_cameras.py
