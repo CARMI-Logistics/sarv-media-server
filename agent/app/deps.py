@@ -7,11 +7,13 @@ resuelve estas factorías vía Depends.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from app.config import get_settings
 from app.domain.ports import FailureHistory, Notifier
 from app.graph import build_graph
+from app.infra.email import EmailNotifier
 from app.infra.failure_history_api import FailureHistoryApi
 from app.infra.gemini import GeminiClient
 from app.infra.log_reader import FileLogReader
@@ -28,6 +30,13 @@ from app.services.health_report import HealthReportService
 from app.services.notify import NotificationService
 from app.services.reporter import ReportFormatter
 from app.services.runner import AgentRunner
+
+logger = logging.getLogger("stream-agent")
+
+
+def _parse_recipients(raw: str) -> list[str]:
+    """Convierte "a@x.com, b@y.com" en ["a@x.com", "b@y.com"] (sin vacíos)."""
+    return [r.strip() for r in raw.split(",") if r.strip()]
 
 
 @lru_cache
@@ -78,9 +87,20 @@ def get_agent_graph():
 @lru_cache
 def get_notifier() -> Notifier:
     settings = get_settings()
-    # Slack solo si hay webhook; en cualquier otro caso, canal deshabilitado.
-    if settings.notify_channel == "slack" and settings.slack_webhook_url:
+    channel = settings.notify_channel
+    # Slack solo si hay webhook.
+    if channel == "slack" and settings.slack_webhook_url:
         return SlackNotifier(settings.slack_webhook_url)
+    # Email solo si hay endpoint y al menos un destinatario.
+    if channel == "email" and settings.email_api_url:
+        recipients = _parse_recipients(settings.recipients_reports)
+        if recipients:
+            return EmailNotifier(settings.email_api_url, recipients)
+        logger.warning(
+            "NOTIFY_CHANNEL=email pero RECIPIENTS_REPORTS está vacío; "
+            "canal de notificación deshabilitado."
+        )
+    # Cualquier otro caso (canal desconocido o config incompleta): fail-safe.
     return NullNotifier()
 
 

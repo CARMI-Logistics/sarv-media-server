@@ -37,8 +37,13 @@ class Settings(BaseSettings):
     scan_interval_seconds: int = 300
 
     # --- Notificación (HU 1.2) ---
+    # Canal: "slack" | "email"  (cualquier otro valor o config incompleta = Null).
     notify_channel: str = "slack"
     slack_webhook_url: str | None = None
+    # Canal email: URL del endpoint (SendGrid, sin auth) y destinatarios
+    # coma-separados. RECIPIENTS_REPORTS=uno@x.com,dos@y.com (se parsea en deps.py).
+    email_api_url: str | None = None
+    recipients_reports: str = ""
 
     # --- Historial en el backend (HU 4.6) ---
     backend_url: str = "http://mediamtx-backend:8080"
