@@ -22,6 +22,23 @@ authJWTExclude:
 - action: pprof
 - action: publish
 
+# Usuarios internos: SOLO se aplican si authMethod=internal (p. ej. el flag
+# local MTX_AUTHMETHOD=internal para pruebas SIN token). En modo 'jwt'
+# (default/prod) MediaMTX IGNORA este bloque, así que NO afecta a producción.
+# Abre TODO (incl. api/metrics/pprof, ips: [] = cualquier IP) para que el
+# reconciler y el agente sigan alcanzando la Control API desde otros contenedores.
+authInternalUsers:
+- user: any
+  pass:
+  ips: []
+  permissions:
+  - action: publish
+  - action: read
+  - action: playback
+  - action: api
+  - action: metrics
+  - action: pprof
+
 ###############################################
 # API
 api: yes

@@ -96,6 +96,16 @@ services:
       # Log compartido para que el agente lo lea (solo lectura del lado del agente)
       - shared-logs:/shared-logs
     command: ["/mediamtx.yml"]
+    # Toggle de autenticación de VIDEO (solo para pruebas locales).
+    # MediaMTX permite sobrescribir cualquier parámetro del yaml con MTX_<PARAM>.
+    #   jwt (default, SEGURO): leer video exige token válido (?jwt=... o Bearer).
+    #   internal: usa el usuario "any" por defecto -> SIN token (abierto).
+    # El default es 'jwt' (fail-secure): prod NO debe fijar esta variable.
+    # Abrir en local (recrear MediaMTX borra rutas en memoria -> re-reconciliar):
+    #   echo 'MTX_AUTHMETHOD=internal' >> .env
+    #   docker compose up -d mediamtx && docker compose restart mediamtx-backend
+    environment:
+      - MTX_AUTHMETHOD=${MTX_AUTHMETHOD:-jwt}
     ports:
       # RTSP
       - "8554:8554"
