@@ -203,7 +203,8 @@ impl From<Failure> for FailureResponse {
 /// Filtros de consulta del historial.
 #[derive(Deserialize)]
 pub struct FailureQuery {
-    pub camera: String,
+    /// Path de la cámara. Si se omite, se listan las fallas de TODAS las cámaras.
+    pub camera: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -565,11 +566,11 @@ pub async fn record_failure(
     get, path = "/admin/failures", tag = "Administration",
     security(("admin_token" = [])),
     params(
-        ("camera" = String, Query, description = "Path de la cámara"),
+        ("camera" = Option<String>, Query, description = "Path de la cámara (omitir = todas)"),
         ("limit" = Option<i64>, Query, description = "Máximo de registros (default 50)")
     ),
     responses(
-        (status = 200, description = "Historial de la cámara", body = [FailureResponse]),
+        (status = 200, description = "Historial (de la cámara o global si se omite 'camera')", body = [FailureResponse]),
         (status = 401, description = "No autorizado")
     )
 )]
@@ -578,11 +579,11 @@ pub async fn list_failures(
     Query(q): Query<FailureQuery>,
 ) -> Result<Json<Vec<FailureResponse>>, (StatusCode, String)> {
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
-    let failures = state
-        .failure_repo
-        .list_by_camera(&q.camera, limit)
-        .await
-        .map_err(repo_err)?;
+    let failures = match q.camera {
+        Some(camera) => state.failure_repo.list_by_camera(&camera, limit).await,
+        None => state.failure_repo.list_recent(limit).await,
+    }
+    .map_err(repo_err)?;
     Ok(Json(failures.into_iter().map(FailureResponse::from).collect()))
 }
 

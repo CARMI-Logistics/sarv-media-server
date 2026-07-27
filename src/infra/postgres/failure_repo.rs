@@ -78,6 +78,20 @@ impl FailureRepo for PgFailureRepo {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    async fn list_recent(&self, limit: i64) -> RepoResult<Vec<Failure>> {
+        let rows = sqlx::query_as::<_, FailureRow>(
+            "SELECT id, camera_path, detected_at, severity, diagnosis, raw, created_at
+             FROM failure_history
+             ORDER BY detected_at DESC
+             LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_err)?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
     async fn latest_by_camera(&self, camera_path: &str) -> RepoResult<Option<Failure>> {
         let row = sqlx::query_as::<_, FailureRow>(
             "SELECT id, camera_path, detected_at, severity, diagnosis, raw, created_at
@@ -122,6 +136,19 @@ mod tests {
         assert_eq!(repo.list_by_camera("cam-1", 10).await.unwrap().len(), 2);
         assert_eq!(repo.list_by_camera("cam-2", 10).await.unwrap().len(), 1);
         assert_eq!(repo.list_by_camera("cam-x", 10).await.unwrap().len(), 0);
+    }
+
+    #[sqlx::test]
+    async fn list_recent_across_all_cameras(pool: PgPool) {
+        let repo = PgFailureRepo::new(pool);
+        repo.record(sample("cam-1", Severity::Error)).await.unwrap();
+        repo.record(sample("cam-2", Severity::Warn)).await.unwrap();
+        repo.record(sample("cam-3", Severity::Ok)).await.unwrap();
+
+        // Sin filtro: trae de todas las cámaras.
+        assert_eq!(repo.list_recent(10).await.unwrap().len(), 3);
+        // Respeta el límite.
+        assert_eq!(repo.list_recent(2).await.unwrap().len(), 2);
     }
 
     #[sqlx::test]

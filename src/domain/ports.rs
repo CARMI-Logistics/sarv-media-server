@@ -56,16 +56,18 @@ pub trait CameraRepo: Send + Sync {
     async fn delete(&self, id: Uuid) -> RepoResult<()>;
 }
 
-/// Historial de fallos/diagnósticos (lo llena el agente, HU 4.6).
+/// Historial de fallos/diagnósticos.
 #[async_trait]
 pub trait FailureRepo: Send + Sync {
     async fn record(&self, new: NewFailure) -> RepoResult<Failure>;
     async fn list_by_camera(&self, camera_path: &str, limit: i64) -> RepoResult<Vec<Failure>>;
-    /// Último registro de una cámara (para deduplicar alertas, HU 4.6).
+    /// Últimos registros de TODAS las cámaras (vista global del historial).
+    async fn list_recent(&self, limit: i64) -> RepoResult<Vec<Failure>>;
+    /// Último registro de una cámara.
     async fn latest_by_camera(&self, camera_path: &str) -> RepoResult<Option<Failure>>;
 }
 
-/// Error al aprovisionar rutas en el servidor de streaming (HU 4.2).
+/// Error al aprovisionar rutas en el servidor de streaming.
 /// No expone tipos de infraestructura (reqwest, etc.); el adaptador los traduce.
 #[derive(Debug, thiserror::Error)]
 pub enum ProvisionError {
