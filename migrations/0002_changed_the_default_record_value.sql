@@ -1,0 +1,1 @@
+ALTER TABLE cameras ALTER COLUMN record SET DEFAULT false;
