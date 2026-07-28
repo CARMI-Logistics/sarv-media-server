@@ -1,6 +1,6 @@
 ###############################################
 # Global settings
-logLevel: debug
+logLevel: info
 logDestinations: [stdout, file]
 logFile: /shared-logs/mediamtx.log
 

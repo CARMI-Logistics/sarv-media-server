@@ -78,6 +78,18 @@ class HealthStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class Transition(str, Enum):
+    """Cambio de estado de una cámara respecto al último registro (HU 4.6).
+
+    Lo usa el historial para deduplicar y para distinguir una caída de una
+    recuperación, de modo que el agente notifique lo justo.
+    """
+
+    UNCHANGED = "unchanged"  # mismo estado que el último registro -> no notificar
+    ALERT = "alert"          # cambió a/entre estados de problema -> notificar
+    RECOVERY = "recovery"    # era problema, ahora OK -> notificar
+
+
 class IssueType(str, Enum):
     """Tipo de problema reconocido por el playbook."""
 

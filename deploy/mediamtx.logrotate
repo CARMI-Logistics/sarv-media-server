@@ -1,0 +1,17 @@
+/var/lib/docker/volumes/*_shared-logs/_data/mediamtx.log {
+    # Rota cuando supere 20 MB (se revisa en la corrida diaria de logrotate).
+    size 20M
+    # Conserva 3 archivos rotados -> tope ~ 20 MB (vivo) + 3 comprimidos.
+    rotate 3
+    # No fallar si el archivo aún no existe (p. ej. antes del primer arranque).
+    missingok
+    # No rotar si está vacío.
+    notifempty
+    # MediaMTX mantiene el descriptor abierto y no reabre con SIGHUP: copiamos y
+    # truncamos en sitio para que siga escribiendo en el mismo fd sin reiniciar.
+    copytruncate
+    # Comprimir los rotados; el más reciente se deja sin comprimir (delaycompress)
+    # por si el agente necesitara leerlo.
+    compress
+    delaycompress
+}

@@ -1,8 +1,8 @@
 """Servicio de notificación: formatea el reporte y lo envía por el canal.
 
 Depende de los puertos Notifier y Redactor (DIP). 🔴 Redacta el mensaje ANTES
-de enviarlo (Slack es un servicio externo). Por defecto solo notifica cuando hay
-problemas, para no generar ruido.
+de enviarlo (el canal es externo). Recibe ya filtradas las cámaras que ameritan
+aviso (caídas y recuperaciones); si la lista está vacía, no envía nada.
 """
 
 from __future__ import annotations
@@ -26,19 +26,17 @@ class NotificationService:
         formatter: ReportFormatter,
         notifier: Notifier,
         redactor: Redactor,
-        only_on_problems: bool = True,
     ) -> None:
         self._formatter = formatter
         self._notifier = notifier
         self._redactor = redactor
-        self._only_on_problems = only_on_problems
 
     async def notify(self, diagnoses: list[Diagnosis]) -> NotifyResult:
+        # Sin cambios que reportar -> no se envía (anti-ruido).
+        if not diagnoses:
+            return NotifyResult(sent=False, message="")
+
         message = self._formatter.format(diagnoses)
-
-        if self._only_on_problems and not self._formatter.has_problems(diagnoses):
-            return NotifyResult(sent=False, message=message)
-
-        safe_message = self._redactor.redact(message)  # 🔴 antes de salir a Slack
+        safe_message = self._redactor.redact(message)  # 🔴 antes de salir al canal
         await self._notifier.send(safe_message)
         return NotifyResult(sent=True, message=safe_message)

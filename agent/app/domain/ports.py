@@ -16,6 +16,7 @@ from app.domain.models import (
     HlsMuxerState,
     LogEvent,
     PathState,
+    Transition,
 )
 
 
@@ -74,11 +75,12 @@ class Notifier(Protocol):
 class FailureHistory(Protocol):
     """Historial de diagnósticos (persistido en el backend).
 
-    `record` guarda un diagnóstico; `has_changed` indica si el estado de la
-    cámara difiere del último registrado (para deduplicar alertas). El mapeo del
-    estado a la severidad del backend es responsabilidad del adaptador.
+    `record` guarda un diagnóstico; `classify` compara el estado actual con el
+    último registrado y devuelve la transición (para deduplicar y distinguir una
+    caída de una recuperación). El mapeo del estado a la severidad del backend es
+    responsabilidad del adaptador.
     """
 
     async def record(self, diagnosis: Diagnosis) -> None: ...
 
-    async def has_changed(self, diagnosis: Diagnosis) -> bool: ...
+    async def classify(self, diagnosis: Diagnosis) -> Transition: ...

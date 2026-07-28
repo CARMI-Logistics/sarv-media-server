@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 
-from app.domain.models import Diagnosis, HealthStatus
+from app.domain.models import Diagnosis, HealthStatus, Transition
 
 # Traducción del estado del agente a la severidad del backend.
 _SEVERITY: dict[HealthStatus, str] = {
@@ -18,6 +18,8 @@ _SEVERITY: dict[HealthStatus, str] = {
     HealthStatus.DOWN: "error",
     HealthStatus.UNKNOWN: "warn",
 }
+# Severidades del backend que representan un problema (no-OK).
+_PROBLEM_SEVERITIES = {"warn", "error"}
 
 
 class FailureHistoryApi:
@@ -49,7 +51,7 @@ class FailureHistoryApi:
             )
             resp.raise_for_status()
 
-    async def has_changed(self, diagnosis: Diagnosis) -> bool:
+    async def classify(self, diagnosis: Diagnosis) -> Transition:
         current = _SEVERITY.get(diagnosis.status, "warn")
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.get(
@@ -60,4 +62,11 @@ class FailureHistoryApi:
             resp.raise_for_status()
             items = resp.json()
         last = items[0]["severity"] if items else None
-        return last != current
+
+        if last == current:
+            return Transition.UNCHANGED  # mismo estado -> dedup
+        if current == "ok":
+            # Recuperación solo si ANTES había un problema registrado; un OK sin
+            # baseline previo no es "recuperación" (evita falsos en el 1er arranque).
+            return Transition.RECOVERY if last in _PROBLEM_SEVERITIES else Transition.UNCHANGED
+        return Transition.ALERT  # cambió a/entre estados de problema

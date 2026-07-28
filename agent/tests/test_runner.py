@@ -2,7 +2,7 @@
 
 import asyncio
 
-from app.domain.models import Diagnosis, HealthStatus
+from app.domain.models import Diagnosis, HealthStatus, Transition
 from app.infra.null_failure_history import NullFailureHistory
 from app.security.redactor import RegexRedactor
 from app.services.notify import NotificationService
@@ -31,14 +31,19 @@ def _diag(name: str, status: HealthStatus) -> Diagnosis:
 
 
 class FakeHistory:
-    """Historial falso: controla qué cámaras 'cambiaron' y registra las guardadas."""
+    """Historial falso: 'changed_names' controla qué cámaras cambiaron; la
+    transición se deriva del estado actual (OK -> recovery, problema -> alert)."""
 
     def __init__(self, changed_names: set[str]) -> None:
         self._changed = changed_names
         self.recorded: list[str] = []
 
-    async def has_changed(self, diagnosis: Diagnosis) -> bool:
-        return diagnosis.name in self._changed
+    async def classify(self, diagnosis: Diagnosis) -> Transition:
+        if diagnosis.name not in self._changed:
+            return Transition.UNCHANGED
+        if diagnosis.status is HealthStatus.OK:
+            return Transition.RECOVERY
+        return Transition.ALERT
 
     async def record(self, diagnosis: Diagnosis) -> None:
         self.recorded.append(diagnosis.name)
@@ -64,6 +69,7 @@ def test_run_and_notify_sends_when_problems() -> None:
 
 
 def test_run_and_notify_skips_notification_when_all_ok() -> None:
+    # NullFailureHistory: un OK sin baseline es UNCHANGED -> no se notifica.
     notifier = FakeNotifier()
     diagnoses = [_diag("cam-ok", HealthStatus.OK)]
     result = asyncio.run(_runner(FakeGraph(diagnoses), notifier).run_and_notify())
@@ -91,3 +97,18 @@ def test_dedup_records_and_notifies_only_changed() -> None:
     assert result.notified is True  # cam-a cambió y es problema → notifica
     assert "cam-a" in notifier.messages[0]
     assert "cam-b" not in notifier.messages[0]  # cam-b no se re-alerta
+
+
+def test_recovery_is_notified_and_recorded() -> None:
+    notifier = FakeNotifier()
+    history = FakeHistory(changed_names={"cam-r"})  # cam-r pasó a OK (recuperación)
+    diagnoses = [_diag("cam-r", HealthStatus.OK)]
+    service = NotificationService(ReportFormatter(), notifier, RegexRedactor())
+    runner = AgentRunner(FakeGraph(diagnoses), service, history, RegexRedactor())
+
+    result = asyncio.run(runner.run_and_notify())
+
+    assert history.recorded == ["cam-r"]  # registra el nuevo baseline OK
+    assert result.notified is True
+    assert "cam-r" in notifier.messages[0]
+    assert "recuperada" in notifier.messages[0].lower()
