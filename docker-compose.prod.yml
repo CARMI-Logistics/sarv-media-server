@@ -56,6 +56,11 @@ services:
   # ---------------------------------------------------------------------------
   cloudsql-proxy:
     image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
     command:
       - "${CLOUDSQL_INSTANCE}"          # project:region:instance
       - "--address=0.0.0.0"

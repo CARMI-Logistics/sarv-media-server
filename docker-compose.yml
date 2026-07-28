@@ -19,6 +19,11 @@ services:
   mediamtx-backend:
     build: .
     container_name: mediamtx-backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
     ports:
       - "8080:8080"
     environment:
@@ -61,6 +66,11 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: media-server-postgres
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
     profiles: ["localdb"]
     # Dev: publicado SOLO en loopback para pruebas locales (cargo test, psql).
     # Puerto host 15432 para no chocar con un Postgres local en 5432.
@@ -89,6 +99,11 @@ services:
   mediamtx:
     image: bluenviron/mediamtx:1.19.2
     container_name: mediamtx
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
       # Grabación deshabilitada (record: no en mediamtx.yml) para no llenar el
@@ -150,6 +165,11 @@ services:
   stream-agent:
     build: ./agent
     container_name: stream-agent
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
     ports:
       # Solo loopback: no accesible desde internet (HU 1.3)
       - "127.0.0.1:8090:8090"
@@ -183,6 +203,11 @@ services:
   caddy:
     build: ./caddy   # Caddy + plugin caddy-ratelimit (ver caddy/Dockerfile)
     container_name: caddy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
     ports:
       - "80:80"
       - "443:443"
