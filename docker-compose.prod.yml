@@ -25,7 +25,16 @@ services:
       - cloudsql-proxy
 
   mediamtx:
-    ports: !reset []
+    # Por defecto MediaMTX NO publica puertos (solo Caddy/HLS es público).
+    # Excepción: RTSP enlazado ÚNICAMENTE a la IP de Tailscale de la VM
+    # (MEDIAMTX_RTSP_BIND) → accesible por el túnel, NO desde internet, sin tocar
+    # el firewall de GCP. Fail-safe: si la variable no se define, cae a 127.0.0.1
+    # (loopback) y no queda expuesto a nadie. En prod sigue exigiendo ?jwt=.
+    #   VM:  MEDIAMTX_RTSP_BIND=$(tailscale ip -4)
+    #   cliente:  ffplay -rtsp_transport tcp "rtsp://<ip-tailscale>:8554/<path>?jwt=..."
+    ports: !override
+      - "${MEDIAMTX_RTSP_BIND:-127.0.0.1}:8554:8554"    # RTSP
+      # - "${MEDIAMTX_RTSP_BIND:-127.0.0.1}:8322:8322"  # (opcional) RTSPS cifrado
 
   # Agente: privado (NO público, Caddy no lo rutea), pero publicado en el
   # LOOPBACK de la VM para poder disparar sus endpoints por túnel SSH:

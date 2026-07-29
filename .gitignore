@@ -34,3 +34,5 @@ config/clients.json
 
 # Script de seeding (herramienta operativa que maneja secretos por entorno)
 scripts/seed_cameras.py
+
+crearvm.sh
