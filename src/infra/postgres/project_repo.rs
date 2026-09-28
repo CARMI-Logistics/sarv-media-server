@@ -16,6 +16,8 @@ struct ProjectRow {
     secret_hash: String,
     all_cameras: bool,
     enabled: bool,
+    jwt_exp_minutes: Option<i32>,
+    jwt_never_expires: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -28,6 +30,8 @@ impl From<ProjectRow> for Project {
             secret_hash: r.secret_hash,
             all_cameras: r.all_cameras,
             enabled: r.enabled,
+            jwt_exp_minutes: r.jwt_exp_minutes,
+            jwt_never_expires: r.jwt_never_expires,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -48,7 +52,8 @@ impl PgProjectRepo {
 impl ProjectRepo for PgProjectRepo {
     async fn find_by_client_id(&self, client_id: &str) -> RepoResult<Option<Project>> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, client_id, secret_hash, all_cameras, enabled, created_at, updated_at
+            "SELECT id, client_id, secret_hash, all_cameras, enabled,
+                    jwt_exp_minutes, jwt_never_expires, created_at, updated_at
              FROM projects WHERE client_id = $1",
         )
         .bind(client_id)
@@ -60,7 +65,8 @@ impl ProjectRepo for PgProjectRepo {
 
     async fn find_by_id(&self, id: Uuid) -> RepoResult<Option<Project>> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, client_id, secret_hash, all_cameras, enabled, created_at, updated_at
+            "SELECT id, client_id, secret_hash, all_cameras, enabled,
+                    jwt_exp_minutes, jwt_never_expires, created_at, updated_at
              FROM projects WHERE id = $1",
         )
         .bind(id)
@@ -72,7 +78,8 @@ impl ProjectRepo for PgProjectRepo {
 
     async fn list_all(&self) -> RepoResult<Vec<Project>> {
         let rows = sqlx::query_as::<_, ProjectRow>(
-            "SELECT id, client_id, secret_hash, all_cameras, enabled, created_at, updated_at
+            "SELECT id, client_id, secret_hash, all_cameras, enabled,
+                    jwt_exp_minutes, jwt_never_expires, created_at, updated_at
              FROM projects ORDER BY client_id",
         )
         .fetch_all(&self.pool)
@@ -83,15 +90,19 @@ impl ProjectRepo for PgProjectRepo {
 
     async fn create(&self, new: NewProject) -> RepoResult<Project> {
         let row = sqlx::query_as::<_, ProjectRow>(
-            "INSERT INTO projects (id, client_id, secret_hash, all_cameras, enabled)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, client_id, secret_hash, all_cameras, enabled, created_at, updated_at",
+            "INSERT INTO projects (id, client_id, secret_hash, all_cameras, enabled,
+                                    jwt_exp_minutes, jwt_never_expires)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id, client_id, secret_hash, all_cameras, enabled,
+                       jwt_exp_minutes, jwt_never_expires, created_at, updated_at",
         )
         .bind(Uuid::new_v4())
         .bind(new.client_id)
         .bind(new.secret_hash)
         .bind(new.all_cameras)
         .bind(new.enabled)
+        .bind(new.jwt_exp_minutes)
+        .bind(new.jwt_never_expires)
         .fetch_one(&self.pool)
         .await
         .map_err(map_sqlx_err)?;
@@ -101,15 +112,19 @@ impl ProjectRepo for PgProjectRepo {
     async fn update(&self, project: &Project) -> RepoResult<Project> {
         let row = sqlx::query_as::<_, ProjectRow>(
             "UPDATE projects
-             SET client_id = $2, secret_hash = $3, all_cameras = $4, enabled = $5
+             SET client_id = $2, secret_hash = $3, all_cameras = $4, enabled = $5,
+                 jwt_exp_minutes = $6, jwt_never_expires = $7
              WHERE id = $1
-             RETURNING id, client_id, secret_hash, all_cameras, enabled, created_at, updated_at",
+             RETURNING id, client_id, secret_hash, all_cameras, enabled,
+                       jwt_exp_minutes, jwt_never_expires, created_at, updated_at",
         )
         .bind(project.id)
         .bind(project.client_id.as_str())
         .bind(project.secret_hash.as_str())
         .bind(project.all_cameras)
         .bind(project.enabled)
+        .bind(project.jwt_exp_minutes)
+        .bind(project.jwt_never_expires)
         .fetch_optional(&self.pool)
         .await
         .map_err(map_sqlx_err)?;
@@ -188,6 +203,8 @@ mod tests {
             secret_hash: "$argon2id$dummy-hash".into(),
             all_cameras: false,
             enabled: true,
+            jwt_exp_minutes: None,
+            jwt_never_expires: false,
         }
     }
 
@@ -196,10 +213,35 @@ mod tests {
         let repo = PgProjectRepo::new(pool);
         let created = repo.create(sample("sigac")).await.unwrap();
         assert_eq!(created.client_id, "sigac");
+        assert_eq!(created.jwt_exp_minutes, None);
+        assert!(!created.jwt_never_expires);
 
         let found = repo.find_by_client_id("sigac").await.unwrap().unwrap();
         assert_eq!(found.id, created.id);
         assert!(repo.find_by_client_id("noexiste").await.unwrap().is_none());
+    }
+
+    #[sqlx::test]
+    async fn create_and_find_with_jwt_expiration_fields(pool: PgPool) {
+        let repo = PgProjectRepo::new(pool);
+        let mut new = sample("con-expiracion");
+        new.jwt_exp_minutes = Some(120);
+        let created = repo.create(new).await.unwrap();
+        assert_eq!(created.jwt_exp_minutes, Some(120));
+        assert!(!created.jwt_never_expires);
+
+        let found = repo
+            .find_by_client_id("con-expiracion")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.jwt_exp_minutes, Some(120));
+
+        let mut never = sample("nunca-expira");
+        never.jwt_never_expires = true;
+        let created_never = repo.create(never).await.unwrap();
+        assert_eq!(created_never.jwt_exp_minutes, None);
+        assert!(created_never.jwt_never_expires);
     }
 
     #[sqlx::test]
@@ -216,9 +258,11 @@ mod tests {
         let mut p = repo.create(sample("odin")).await.unwrap();
         p.all_cameras = true;
         p.enabled = false;
+        p.jwt_exp_minutes = Some(30);
         let updated = repo.update(&p).await.unwrap();
         assert!(updated.all_cameras);
         assert!(!updated.enabled);
+        assert_eq!(updated.jwt_exp_minutes, Some(30));
 
         repo.delete(p.id).await.unwrap();
         assert!(repo.find_by_id(p.id).await.unwrap().is_none());

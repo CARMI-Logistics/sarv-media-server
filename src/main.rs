@@ -313,14 +313,25 @@ impl AppState {
         Ok(Jwks { keys: vec![jwk] })
     }
 
-    /// Genera un JWT firmado con RS256
+    /// Genera un JWT firmado con RS256. La expiración se resuelve según la
+    /// configuración del proyecto (ver `resolve_jwt_exp`): `jwt_never_expires`
+    /// gana sobre `jwt_exp_minutes`, que a su vez gana sobre el default global
+    /// (comportamiento idéntico al anterior cuando el proyecto no configuró
+    /// nada).
     fn generate_jwt(
         &self,
         client_id: &str,
         permissions: Vec<MtxPermission>,
+        jwt_exp_minutes: Option<i32>,
+        jwt_never_expires: bool,
     ) -> Result<String, jsonwebtoken::errors::Error> {
         let now = OffsetDateTime::now_utc();
-        let exp = now + Duration::minutes(self.config.jwt_exp_minutes);
+        let exp = resolve_jwt_exp(
+            now,
+            jwt_never_expires,
+            jwt_exp_minutes,
+            self.config.jwt_exp_minutes,
+        );
 
         let claims = Claims {
             sub: client_id.to_string(),
@@ -333,6 +344,26 @@ impl AppState {
         header.kid = Some("key1".to_string());
 
         encode(&header, &claims, &self.encoding_key)
+    }
+}
+
+/// Resuelve el instante de expiración de un JWT según la prioridad decidida
+/// para la expiración configurable por proyecto: `jwt_never_expires` (si
+/// `true`) gana sobre `jwt_exp_minutes` del proyecto; si no, `jwt_exp_minutes`
+/// (si tiene valor) gana sobre `default_minutes` (el default global
+/// `JWT_EXP_MINUTES`). "No expira" se representa como 100 años desde `now`,
+/// no como la ausencia del claim `exp`.
+fn resolve_jwt_exp(
+    now: OffsetDateTime,
+    jwt_never_expires: bool,
+    jwt_exp_minutes: Option<i32>,
+    default_minutes: i64,
+) -> OffsetDateTime {
+    if jwt_never_expires {
+        now + Duration::days(365 * 100)
+    } else {
+        let minutes = jwt_exp_minutes.map(i64::from).unwrap_or(default_minutes);
+        now + Duration::minutes(minutes)
     }
 }
 
@@ -547,7 +578,12 @@ async fn login(
     let permissions = build_permissions(&access);
 
     // Generar JWT
-    match state.generate_jwt(&project.client_id, permissions) {
+    match state.generate_jwt(
+        &project.client_id,
+        permissions,
+        project.jwt_exp_minutes,
+        project.jwt_never_expires,
+    ) {
         Ok(token) => {
             info!("JWT generado exitosamente para proyecto: {}", project.client_id);
             Ok(Json(LoginResponse { token }))
@@ -885,6 +921,8 @@ async fn migrate_clients(config: &Config) -> Result<(), Box<dyn std::error::Erro
             secret_hash: c.secret_hash,
             all_cameras: true,
             enabled: true,
+            jwt_exp_minutes: None,
+            jwt_never_expires: false,
         })
         .await?;
         imported += 1;
@@ -994,7 +1032,32 @@ async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_permissions, CameraAccess};
+    use super::{build_permissions, resolve_jwt_exp, CameraAccess};
+    use time::{Duration, OffsetDateTime};
+
+    #[test]
+    fn resolve_jwt_exp_uses_global_default_when_project_has_nothing_configured() {
+        let now = OffsetDateTime::now_utc();
+        let exp = resolve_jwt_exp(now, false, None, 60);
+        assert_eq!(exp, now + Duration::minutes(60));
+    }
+
+    #[test]
+    fn resolve_jwt_exp_uses_project_minutes_over_global_default() {
+        let now = OffsetDateTime::now_utc();
+        let exp = resolve_jwt_exp(now, false, Some(120), 60);
+        assert_eq!(exp, now + Duration::minutes(120));
+    }
+
+    #[test]
+    fn resolve_jwt_exp_never_expires_wins_over_project_minutes() {
+        let now = OffsetDateTime::now_utc();
+        // `jwt_exp_minutes` no debería importar cuando `jwt_never_expires` es
+        // `true`: son mutuamente excluyentes, pero `resolve_jwt_exp` debe ser
+        // seguro incluso si llegara un estado inconsistente.
+        let exp = resolve_jwt_exp(now, true, Some(30), 60);
+        assert_eq!(exp, now + Duration::days(365 * 100));
+    }
 
     #[test]
     fn all_grants_read_and_playback_wildcard() {

@@ -123,6 +123,8 @@ mod tests {
             secret_hash: crate::secret::hash_secret(secret).unwrap(),
             all_cameras: true,
             enabled,
+            jwt_exp_minutes: None,
+            jwt_never_expires: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

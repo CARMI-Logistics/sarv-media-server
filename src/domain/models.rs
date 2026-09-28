@@ -37,6 +37,11 @@ impl Severity {
 }
 
 /// Proyecto consumidor (reemplaza clients.json). `secret_hash` es Argon2id.
+///
+/// `jwt_exp_minutes`/`jwt_never_expires` son mutuamente excluyentes:
+/// `jwt_never_expires` (si `true`) gana sobre `jwt_exp_minutes`; si no,
+/// `jwt_exp_minutes` (si tiene valor) gana sobre el default global
+/// `JWT_EXP_MINUTES`. Ver `AppState::generate_jwt`.
 #[derive(Debug, Clone)]
 pub struct Project {
     pub id: Uuid,
@@ -44,6 +49,8 @@ pub struct Project {
     pub secret_hash: String,
     pub all_cameras: bool,
     pub enabled: bool,
+    pub jwt_exp_minutes: Option<i32>,
+    pub jwt_never_expires: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -55,6 +62,8 @@ pub struct NewProject {
     pub secret_hash: String,
     pub all_cameras: bool,
     pub enabled: bool,
+    pub jwt_exp_minutes: Option<i32>,
+    pub jwt_never_expires: bool,
 }
 
 /// Cámara. `rtsp_url` en claro en el dominio; el adaptador la cifra/descifra.

@@ -136,6 +136,10 @@ pub struct ProjectResponse {
     pub all_cameras: bool,
     pub enabled: bool,
     pub camera_ids: Vec<Uuid>,
+    /// Minutos de expiración del JWT de este proyecto; `null` usa el default global (`JWT_EXP_MINUTES`).
+    pub jwt_exp_minutes: Option<i32>,
+    /// Si es `true`, los JWT de este proyecto no expiran (ver `AppState::generate_jwt`).
+    pub jwt_never_expires: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -149,6 +153,16 @@ pub struct CreateProjectRequest {
     pub all_cameras: bool,
     #[serde(default)]
     pub camera_ids: Vec<Uuid>,
+    /// Minutos de expiración del JWT para este proyecto. Si se omite o es `null`,
+    /// se usa el default global (`JWT_EXP_MINUTES`). Mutuamente excluyente con
+    /// `jwt_never_expires: true`.
+    #[serde(default)]
+    pub jwt_exp_minutes: Option<i32>,
+    /// Si es `true`, los JWT de este proyecto llevan `exp` a ~100 años desde la
+    /// emisión (en la práctica no-expirable). Mutuamente excluyente con
+    /// `jwt_exp_minutes` no nulo.
+    #[serde(default)]
+    pub jwt_never_expires: bool,
 }
 
 /// Edición parcial de proyecto (solo los campos presentes se actualizan).
@@ -158,6 +172,12 @@ pub struct UpdateProjectRequest {
     pub all_cameras: Option<bool>,
     pub enabled: Option<bool>,
     pub camera_ids: Option<Vec<Uuid>>, // reasignar cámaras
+    /// Si viene, reemplaza los minutos de expiración del proyecto. `null` y la
+    /// ausencia del campo son indistinguibles (limitación conocida de este
+    /// DTO): no hay forma de volver a "usa el default global" en un proyecto
+    /// que ya tiene `jwt_exp_minutes` configurado sin recrearlo.
+    pub jwt_exp_minutes: Option<i32>,
+    pub jwt_never_expires: Option<bool>,
 }
 
 /// Registro de un diagnóstico (lo envía el agente, ya redactado).
@@ -383,6 +403,8 @@ async fn to_project_response(
         all_cameras: project.all_cameras,
         enabled: project.enabled,
         camera_ids,
+        jwt_exp_minutes: project.jwt_exp_minutes,
+        jwt_never_expires: project.jwt_never_expires,
         created_at: project.created_at,
         updated_at: project.updated_at,
     })
@@ -421,6 +443,13 @@ pub async fn create_project(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateProjectRequest>,
 ) -> Result<(StatusCode, Json<ProjectResponse>), (StatusCode, String)> {
+    if req.jwt_never_expires && req.jwt_exp_minutes.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "jwt_exp_minutes y jwt_never_expires son mutuamente excluyentes".to_string(),
+        ));
+    }
+
     let secret_hash = crate::secret::hash_secret(&req.secret)
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "error interno".to_string()))?;
 
@@ -431,6 +460,8 @@ pub async fn create_project(
             secret_hash,
             all_cameras: req.all_cameras,
             enabled: true,
+            jwt_exp_minutes: req.jwt_exp_minutes,
+            jwt_never_expires: req.jwt_never_expires,
         })
         .await
         .map_err(repo_err)?;
@@ -502,6 +533,19 @@ pub async fn update_project(
     }
     if let Some(enabled) = req.enabled {
         project.enabled = enabled;
+    }
+    if let Some(jwt_exp_minutes) = req.jwt_exp_minutes {
+        project.jwt_exp_minutes = Some(jwt_exp_minutes);
+    }
+    if let Some(jwt_never_expires) = req.jwt_never_expires {
+        project.jwt_never_expires = jwt_never_expires;
+    }
+
+    if project.jwt_never_expires && project.jwt_exp_minutes.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "jwt_exp_minutes y jwt_never_expires son mutuamente excluyentes".to_string(),
+        ));
     }
 
     let updated = state.project_repo.update(&project).await.map_err(repo_err)?;

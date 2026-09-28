@@ -36,3 +36,8 @@ config/clients.json
 scripts/seed_cameras.py
 
 crearvm.sh
+
+# Cascarón mi-ide-claude (se regenera solo, no versionar)
+.claude/
+CLAUDE.md
+graphify-out/

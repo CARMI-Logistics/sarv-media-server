@@ -56,9 +56,9 @@ Solo el agente, aislado:
 
 ```bash
 docker build -t stream-agent ./agent
-docker run --rm -p 127.0.0.1:8090:8090 -e AGENT_API_TOKEN=xxx stream-agent
-curl http://127.0.0.1:8090/health
-curl -H "Authorization: Bearer xxx" http://127.0.0.1:8090/report
+docker run --rm -p 127.0.0.1:8091:8091 -e AGENT_API_TOKEN=xxx stream-agent
+curl http://127.0.0.1:8091/health
+curl -H "Authorization: Bearer xxx" http://127.0.0.1:8091/report
 ```
 
 Tests:
@@ -86,7 +86,7 @@ internas) va en `environment`; los **secretos** se ponen en `agent/.env`
 
 - **Solo observa:** el agente nunca modifica el media server. El cliente de la
   API solo tiene métodos de lectura (invariante cubierto por test).
-- **No accesible desde internet:** publicado solo en `127.0.0.1:8090`.
+- **No accesible desde internet:** publicado solo en `127.0.0.1:8091`.
 - **Autorización:** los endpoints de diagnóstico exigen `AGENT_API_TOKEN`
   (fail-closed: sin token configurado responden 503).
 - **Redacción:** las credenciales (URLs RTSP, tokens) se ocultan **antes** de

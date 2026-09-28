@@ -148,3 +148,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
   ```
   De todas formas el scheduler corre solo cada `SCAN_INTERVAL_SECONDS` (default 300s; `<=0` lo desactiva).
 - **Rotación de secretos:** editar `.env`/`agent/.env` y `up -d`. Rotar `DB_ENCRYPTION_KEY` implica re-cifrar las URLs (re-seeding).
+- **Emergencia: invalidar un JWT `jwt_never_expires` filtrado.** No existe revocación activa de tokens ya emitidos (ni este backend ni MediaMTX re-validan contra la BD por request), así que un token `never_expires` filtrado sigue siendo válido indefinidamente salvo que se rote la clave RSA de firma:
+  1. Generar un par de claves RSA nuevo y reemplazar el archivo apuntado por `JWT_PRIVATE_KEY_PATH` (montado en `/keys/jwt_private_key.pem`, ver `docker-compose.yml`).
+  2. `docker compose ... up -d --build mediamtx-backend` para que el proceso cargue la clave nueva y reconstruya el JWKS (`GET /jwks`) que MediaMTX consulta vía `authJWTJWKS`.
+  3. **Efecto colateral:** esto invalida de inmediato **todos** los JWT en circulación de **todos** los proyectos (no solo el afectado) — cualquier cliente activo (incluyendo `vision-core`) debe volver a hacer `POST /auth/login` para obtener un token válido contra la clave nueva.
+  4. No hay una alternativa más quirúrgica: es la única palanca disponible hoy para revocar un token stateless ya emitido (ver plan [[2026-09-28-jwt-expiracion-configurable-media-server]] en el baúl).
