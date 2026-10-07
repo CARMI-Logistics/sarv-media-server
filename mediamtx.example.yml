@@ -187,7 +187,10 @@ paths:
   # datos y el backend las sincroniza con MediaMTX vía la Control API (HU 4.2).
   # Este archivo solo conserva la configuración global y los patrones/publishers.
 
-  ~^live/.*$:
+  # Video procesado publicado anidado bajo el raw_path de cada cámara:
+  # <raw_path>/<camera_group>/<role> (3 segmentos). No valida que el primer
+  # segmento sea un raw_path real.
+  ~^[^/]+/[^/]+/[^/]+$:
       source: publisher
       record: no
       recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
