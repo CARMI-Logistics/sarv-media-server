@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 # Etapa 1: Build
 # -----------------------------------------------------------------------------
-FROM rust:latest AS builder
+FROM rust:bookworm AS builder
 
 WORKDIR /app
 
@@ -34,11 +34,22 @@ RUN touch src/main.rs && cargo build --release
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
-# Instalar dependencias mínimas de runtime (incluye curl para healthcheck)
+# Instalar dependencias mínimas de runtime (incluye curl para healthcheck y
+# ffmpeg para extraer el frame del endpoint GET /cameras/{path}/snapshot)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+# Usuario sin privilegios: ffmpeg parsea video de cámaras externas, así que el
+# proceso no debe ser root ni tener la clave de firma al alcance de un exploit.
+# /keys se crea con su dueño para que un volumen NUEVO lo herede; un volumen
+# ya existente hay que corregirlo a mano (ver RUNBOOK.md §8).
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
+    && mkdir /keys \
+    && chown app:app /keys
 
 WORKDIR /app
 
@@ -52,6 +63,8 @@ EXPOSE 8080
 ENV SERVER_PORT=8080
 ENV JWT_EXP_MINUTES=60
 ENV RUST_LOG=info
+
+USER app
 
 # Ejecutar el backend. ENTRYPOINT para que los args se pasen al binario:
 #   (sin args)          -> arranca el servidor

@@ -147,9 +147,93 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
   curl -X POST -H "Authorization: Bearer $AGENT_API_TOKEN" http://localhost:8090/run # pipeline + notifica
   ```
   De todas formas el scheduler corre solo cada `SCAN_INTERVAL_SECONDS` (default 300s; `<=0` lo desactiva).
+- **Snapshot de cámara:** `GET /cameras/<path>/snapshot[?width=N]` devuelve un JPEG (`Cache-Control: no-store`) del encuadre completo; `width` (160–1920, default 1280) solo escala conservando proporción. Requiere el JWT de `POST /auth/login` con permiso `read` sobre el path (con `all_cameras=true` basta cualquier cámara habilitada). El backend lanza `ffmpeg` leyendo el RTSP interno (`MEDIAMTX_RTSP_URL`, default `rtsp://mediamtx:8554`) con el mismo JWT del request.
+  - **Concurrencia:** `SNAPSHOT_MAX_CONCURRENT` (default 4) ffmpeg simultáneos; el resto espera turno y la espera cuenta contra el timeout de 10 s.
+  - **Códigos:** 401 sin/mal token o vencido · 403 sin permiso `read` · 404 path inexistente o deshabilitado · 422 `width` inválido · 502 ffmpeg falló o no produjo JPEG · 504 sin frame en 10 s (el hijo ffmpeg se mata).
+  - **Prueba manual:**
+    ```bash
+    TOKEN=$(curl -s -X POST https://media.carmi.com/auth/login -H 'Content-Type: application/json' \
+      -d '{"client_id":"<id>","client_secret":"<secreto>"}' | jq -r .token)
+    curl -s -o snap.jpg -w '%{http_code} %{time_total}s\n' -H "Authorization: Bearer $TOKEN" \
+      "https://media.carmi.com/cameras/<path>/snapshot?width=640"   # 200; verifica con: file snap.jpg
+    curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+      "https://media.carmi.com/cameras/<path>/snapshot?width=50"     # 422
+    ```
+  - **Cámara recién creada:** puede dar 502/504 hasta que el reconciler (300 s) la registre en MediaMTX.
+  - **Rate limit:** Caddy limita 120 eventos/min por IP; con muchas cámaras en un solo ciclo, escalonar las peticiones.
 - **Rotación de secretos:** editar `.env`/`agent/.env` y `up -d`. Rotar `DB_ENCRYPTION_KEY` implica re-cifrar las URLs (re-seeding).
 - **Emergencia: invalidar un JWT `jwt_never_expires` filtrado.** No existe revocación activa de tokens ya emitidos (ni este backend ni MediaMTX re-validan contra la BD por request), así que un token `never_expires` filtrado sigue siendo válido indefinidamente salvo que se rote la clave RSA de firma:
   1. Generar un par de claves RSA nuevo y reemplazar el archivo apuntado por `JWT_PRIVATE_KEY_PATH` (montado en `/keys/jwt_private_key.pem`, ver `docker-compose.yml`).
   2. `docker compose ... up -d --build mediamtx-backend` para que el proceso cargue la clave nueva y reconstruya el JWKS (`GET /jwks`) que MediaMTX consulta vía `authJWTJWKS`.
   3. **Efecto colateral:** esto invalida de inmediato **todos** los JWT en circulación de **todos** los proyectos (no solo el afectado) — cualquier cliente activo (incluyendo `vision-core`) debe volver a hacer `POST /auth/login` para obtener un token válido contra la clave nueva.
   4. No hay una alternativa más quirúrgica: es la única palanca disponible hoy para revocar un token stateless ya emitido (ver plan [[2026-09-28-jwt-expiracion-configurable-media-server]] en el baúl).
+
+## 8. Migración a usuario no-root (una sola vez por entorno)
+
+Desde que la imagen del backend incluye ffmpeg (snapshot de cámaras), el proceso corre como `app` (UID/GID **10001**), no como root. El volumen `jwt-keys` **ya existente** tiene la clave `jwt_private_key.pem` con dueño `root` y permisos `0600`: sin este paso el backend no la podría leer y **no arrancaría**. Los volúmenes nuevos heredan el dueño correcto del Dockerfile y no necesitan nada.
+
+> Orden obligatorio: **corregir el dueño primero, desplegar después.** El `chown` es compatible con la imagen vieja (root lee todo), así que no hay downtime extra.
+
+Prerrequisito de `./config`: `config/clients.json` debe ser legible por el usuario 10001 (`chmod 644 config/clients.json`; el directorio, `755`). Se monta de solo lectura, así que el contenedor no puede cambiarlo.
+
+### En la VM (prod)
+```bash
+cd <repo-en-la-vm>
+# 1. Nombre real del volumen (compose le pone prefijo de proyecto)
+docker volume ls | grep jwt-keys            # p. ej. sarv-media-server_jwt-keys
+VOL=<nombre-del-volumen>
+
+# 2. Respaldo (contiene la clave privada: guárdalo fuera de la VM y bórralo de aquí)
+docker run --rm -v $VOL:/keys -v $PWD:/backup debian:bookworm-slim \
+  tar czf /backup/jwt-keys-$(date +%F).tgz -C / keys
+chmod 600 jwt-keys-*.tgz
+
+# 3. Anotar el kid actual para comparar después
+curl -s https://media.carmi.com/jwks | jq -r '.keys[].kid'
+
+# 4. Corregir dueño del volumen (imagen vieja sigue funcionando)
+docker run --rm -v $VOL:/keys debian:bookworm-slim chown -R 10001:10001 /keys
+docker run --rm -v $VOL:/keys debian:bookworm-slim ls -ln /keys   # esperado: 10001 10001 -rw-------
+
+# 5. Permisos de config
+chmod 644 config/clients.json && chmod 755 config
+
+# 6. Desplegar
+git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# 7. Verificar
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps          # backend healthy
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec mediamtx-backend id   # uid=10001(app)
+curl -s https://media.carmi.com/jwks | jq -r '.keys[].kid'                  # MISMO kid del paso 3
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail 50 mediamtx-backend | grep -i "permission\|denied"   # vacío
+```
+Verifica también que un token ya emitido sigue sirviendo (`GET /cameras` con un JWT anterior al despliegue).
+
+**Rollback:** `git checkout <commit-anterior>` + `up -d --build`. El `chown` a 10001 no estorba a la imagen vieja. Si la clave se perdió o se regeneró (kid distinto), restaurar el respaldo: `docker run --rm -v $VOL:/keys -v $PWD:/backup debian:bookworm-slim tar xzf /backup/jwt-keys-<fecha>.tgz -C /`.
+
+### En local (desarrollo)
+El volumen local se llama `sarv-media-server_jwt-keys` y hoy tiene la clave con dueño `0:0`.
+```bash
+cd sarv-media-server
+docker compose ps                                  # opcional: ver qué corre
+VOL=sarv-media-server_jwt-keys
+
+# Opción A (conserva tus tokens de dev): corregir dueño
+docker run --rm -v $VOL:/keys debian:bookworm-slim chown -R 10001:10001 /keys
+docker compose up -d --build mediamtx-backend
+
+# Opción B (si no te importan los tokens de dev): empezar de cero
+docker compose down && docker volume rm $VOL && docker compose up -d --build
+# (se regenera la clave y todos los clientes deben volver a hacer POST /auth/login)
+
+# Verificar
+docker compose exec mediamtx-backend id            # uid=10001(app)
+curl -s localhost:8080/health
+curl -s localhost:8080/jwks | jq -r '.keys[].kid'
+```
+`config/clients.json` local ya es `0644`, no requiere cambios.
+
+### Síntomas si se omite el paso
+- Log del backend: `Permission denied (os error 13)` al cargar `/keys/jwt_private_key.pem` y el contenedor reinicia en bucle.
+- Se arregla corrigiendo el dueño del volumen (paso 4) y reiniciando; no hace falta tocar la imagen.
