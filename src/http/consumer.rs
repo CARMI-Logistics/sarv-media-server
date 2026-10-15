@@ -7,16 +7,21 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
+use axum::extract::{Path, Query, State};
+use axum::http::{
+    header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE},
+    HeaderMap, StatusCode,
+};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use jsonwebtoken::{Algorithm, Validation};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::domain::models::Camera;
+use crate::services::snapshot::{parse_width, SnapshotError};
 use crate::{AppState, Claims, MtxPermission};
 
 /// Referencia estable de cámara para consumidores.
@@ -40,16 +45,19 @@ impl From<Camera> for CameraRef {
 }
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/cameras", get(list_my_cameras))
+    Router::new()
+        .route("/cameras", get(list_my_cameras))
+        .route("/cameras/:path/snapshot", get(camera_snapshot))
+}
+
+/// Extrae el token del header `Authorization: Bearer <jwt>`.
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers.get(AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ")
 }
 
 /// Valida el Bearer JWT del proyecto con la clave pública (RS256 + exp).
 fn validate_bearer(state: &AppState, headers: &HeaderMap) -> Option<Claims> {
-    let token = headers
-        .get(AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")?;
+    let token = bearer_token(headers)?;
     let validation = Validation::new(Algorithm::RS256);
     jsonwebtoken::decode::<Claims>(token, &state.decoding_key, &validation)
         .ok()
@@ -86,6 +94,76 @@ pub async fn list_my_cameras(
         .map(CameraRef::from)
         .collect();
     Ok(Json(out))
+}
+
+/// Query de `GET /cameras/{path}/snapshot`. `width` llega como texto para que
+/// un valor no numérico también responda 422 (y no el 400 genérico de axum).
+#[derive(Deserialize)]
+pub struct SnapshotQuery {
+    width: Option<String>,
+}
+
+/// Imagen JPEG en vivo de una cámara (encuadre completo, sin recorte).
+///
+/// Requiere el permiso `read` sobre `path` en el JWT (un permiso con `path`
+/// vacío equivale a todas las cámaras). `width` (160–1920, default 1280)
+/// escala conservando la proporción. Nunca se cachea.
+#[utoipa::path(
+    get, path = "/cameras/{path}/snapshot", tag = "Consumer",
+    security(("project_jwt" = [])),
+    params(
+        ("path" = String, Path, description = "Path de la cámara"),
+        ("width" = Option<u32>, Query, description = "Ancho en px (160–1920, default 1280)")
+    ),
+    responses(
+        (status = 200, description = "JPEG de la cámara", content_type = "image/jpeg", body = Vec<u8>),
+        (status = 401, description = "JWT ausente, inválido o vencido"),
+        (status = 403, description = "Sin permiso read sobre el path"),
+        (status = 404, description = "Cámara inexistente"),
+        (status = 422, description = "width fuera de rango"),
+        (status = 502, description = "Fallo del decodificador"),
+        (status = 504, description = "Sin frame en 10 s")
+    )
+)]
+pub async fn camera_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(path): Path<String>,
+    Query(query): Query<SnapshotQuery>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    let claims = validate_bearer(&state, &headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let token = bearer_token(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let width = parse_width(query.width.as_deref()).ok_or(StatusCode::UNPROCESSABLE_ENTITY)?;
+    if !can_read(&claims.mediamtx_permissions, &path) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    ensure_camera_enabled(&state, &path).await?;
+
+    let jpeg = state
+        .snapshot
+        .capture(&path, token, width)
+        .await
+        .map_err(|e| match e {
+            SnapshotError::Timeout => StatusCode::GATEWAY_TIMEOUT,
+            SnapshotError::Decoder => StatusCode::BAD_GATEWAY,
+        })?;
+    Ok(([(CONTENT_TYPE, "image/jpeg"), (CACHE_CONTROL, "no-store")], jpeg).into_response())
+}
+
+/// 404 si la cámara no existe o está deshabilitada (no hay stream que leer).
+async fn ensure_camera_enabled(state: &AppState, path: &str) -> Result<(), StatusCode> {
+    match state.camera_repo.find_by_path(path).await {
+        Ok(Some(camera)) if camera.enabled => Ok(()),
+        Ok(_) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// ¿Hay permiso `read` sobre `path`? (`path` vacío en el permiso = todas).
+fn can_read(permissions: &[MtxPermission], path: &str) -> bool {
+    permissions
+        .iter()
+        .any(|p| p.action == "read" && (p.path.is_empty() || p.path == path))
 }
 
 /// Filtra las cámaras según los permisos `read` del token: coincide con lo

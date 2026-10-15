@@ -37,6 +37,7 @@ use infra::mediamtx::MediaMtxProvisioner;
 use infra::postgres::{PgCameraRepo, PgFailureRepo, PgProjectRepo};
 use services::auth::{AuthService, CameraAccess};
 use services::reconciler::ReconcilerService;
+use services::snapshot::{SnapshotService, SNAPSHOT_TIMEOUT};
 
 // ============================================================================
 // Configuración
@@ -65,6 +66,10 @@ struct Config {
     reconcile_interval_secs: u64,
     /// Token bearer para los endpoints de administración (secreto → se redacta)
     admin_api_token: String,
+    /// Base RTSP interna de MediaMTX desde la que ffmpeg lee los snapshots
+    mediamtx_rtsp_url: String,
+    /// Máximo de ffmpeg simultáneos para `GET /cameras/{path}/snapshot`
+    snapshot_max_concurrent: usize,
 }
 
 /// `Debug` manual: NUNCA imprime la cadena de conexión ni la clave de cifrado.
@@ -80,6 +85,8 @@ impl std::fmt::Debug for Config {
             .field("mediamtx_api_url", &self.mediamtx_api_url)
             .field("reconcile_interval_secs", &self.reconcile_interval_secs)
             .field("admin_api_token", &"<redactado>")
+            .field("mediamtx_rtsp_url", &self.mediamtx_rtsp_url)
+            .field("snapshot_max_concurrent", &self.snapshot_max_concurrent)
             .finish()
     }
 }
@@ -118,6 +125,14 @@ impl Config {
 
         let admin_api_token = env::var("ADMIN_API_TOKEN").unwrap_or_default();
 
+        let mediamtx_rtsp_url =
+            env::var("MEDIAMTX_RTSP_URL").unwrap_or_else(|_| "rtsp://mediamtx:8554".to_string());
+
+        let snapshot_max_concurrent = env::var("SNAPSHOT_MAX_CONCURRENT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4);
+
         Self {
             server_port,
             jwt_exp_minutes,
@@ -128,6 +143,8 @@ impl Config {
             mediamtx_api_url,
             reconcile_interval_secs,
             admin_api_token,
+            mediamtx_rtsp_url,
+            snapshot_max_concurrent,
         }
     }
 }
@@ -246,6 +263,8 @@ struct AppState {
     /// Reconciler BD → MediaMTX (HU 4.2). Lo usa la tarea de arranque y, en
     /// HU 4.5, los endpoints de administración para sync puntual.
     reconciler: Arc<ReconcilerService>,
+    /// Captura de frames vía ffmpeg para `GET /cameras/{path}/snapshot`.
+    snapshot: Arc<SnapshotService>,
 }
 
 impl AppState {
@@ -276,6 +295,13 @@ impl AppState {
             Arc::new(MediaMtxProvisioner::new(&config.mediamtx_api_url));
         let reconciler = Arc::new(ReconcilerService::new(camera_repo.clone(), provisioner));
 
+        let snapshot = Arc::new(SnapshotService::new(
+            "ffmpeg",
+            config.mediamtx_rtsp_url.clone(),
+            config.snapshot_max_concurrent,
+            SNAPSHOT_TIMEOUT,
+        ));
+
         Ok(Self {
             encoding_key: material.encoding_key,
             decoding_key: material.decoding_key,
@@ -286,6 +312,7 @@ impl AppState {
             camera_repo,
             failure_repo,
             reconciler,
+            snapshot,
         })
     }
 
@@ -758,7 +785,8 @@ The JWT contains the following claims:
         http::admin::delete_project,
         http::admin::record_failure,
         http::admin::list_failures,
-        http::consumer::list_my_cameras
+        http::consumer::list_my_cameras,
+        http::consumer::camera_snapshot
     ),
     components(
         schemas(

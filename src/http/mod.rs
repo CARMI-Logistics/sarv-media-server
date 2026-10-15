@@ -3,3 +3,6 @@
 
 pub mod admin;
 pub mod consumer;
+
+#[cfg(test)]
+mod snapshot_tests;

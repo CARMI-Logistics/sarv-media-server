@@ -3,3 +3,4 @@
 
 pub mod auth;
 pub mod reconciler;
+pub mod snapshot;

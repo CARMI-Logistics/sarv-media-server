@@ -37,7 +37,7 @@
 	respond @preflight 204
 
 	# --- Backend: login, JWKS, docs, administración y consulta de cámaras ---
-	@backend path /auth/* /jwks /docs* /openapi.json /admin/* /cameras
+	@backend path /auth/* /jwks /docs* /openapi.json /admin/* /cameras /cameras/*/snapshot
 	handle @backend {
 		reverse_proxy mediamtx-backend:8080
 	}
